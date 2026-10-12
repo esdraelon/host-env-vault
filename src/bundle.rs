@@ -403,4 +403,55 @@ mod tests {
         relabeled[at..at + worker.len()].copy_from_slice(worker);
         assert!(open(&relabeled, &kek).is_err());
     }
+
+    #[test]
+    fn seal_rejects_empty_duplicate_and_invalid_entries() {
+        let kek = kek();
+        assert!(matches!(seal(ProfileId::DenariusWeb, vec![], &kek), Err(Error::EmptyBundle)));
+        assert!(matches!(
+            seal(
+                ProfileId::DenariusWeb,
+                vec![env("bad name", "x")],
+                &kek
+            ),
+            Err(Error::InvalidName(_))
+        ));
+        assert!(matches!(
+            seal(
+                ProfileId::DenariusWeb,
+                vec![env("DB_PASS", "x"), env("DB_PASS", "y")],
+                &kek
+            ),
+            Err(Error::DuplicateEntry(_))
+        ));
+        assert!(matches!(
+            seal(
+                ProfileId::DenariusWeb,
+                vec![env("DB_PASS", "bad\nline")],
+                &kek
+            ),
+            Err(Error::InvalidEnvValue(_))
+        ));
+    }
+
+    #[test]
+    fn open_rejects_truncated_bundle() {
+        let kek = kek();
+        let bundle = seal(
+            ProfileId::DenariusWeb,
+            vec![env("DB_PASS", "x")],
+            &kek,
+        )
+        .unwrap();
+        assert!(matches!(open(&bundle[..8], &kek), Err(Error::BundleAuth)));
+    }
+
+    #[test]
+    fn open_key_rejects_short_wrapped_blob() {
+        let dek = random_array::<32>().unwrap();
+        assert!(matches!(
+            open_key(&dek, b"aad", &[0u8; 8]),
+            Err(Error::RuntimeBody)
+        ));
+    }
 }

@@ -84,3 +84,69 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn wrap_unwrap_round_trip() {
+        let kek = AgeKek::generate();
+        let dek = [7u8; 32];
+        let wrapped = kek.wrap_dek(&dek).unwrap();
+        let back = kek.unwrap_dek(&wrapped).unwrap();
+        assert_eq!(&*back, &dek);
+    }
+
+    #[test]
+    fn unwrap_rejects_invalid_or_short_plaintext() {
+        let kek = AgeKek::generate();
+        assert!(matches!(kek.unwrap_dek(b"not-valid-age"), Err(Error::Kek)));
+        let dek = [9u8; 32];
+        let wrapped = kek.wrap_dek(&dek).unwrap();
+        let other = AgeKek::generate();
+        assert!(matches!(other.unwrap_dek(&wrapped), Err(Error::Kek)));
+    }
+
+    #[test]
+    fn write_and_read_identity_round_trip() {
+        let kek = AgeKek::generate();
+        let line = kek.recipient_line();
+        assert!(line.starts_with("age1"));
+        let dir = std::env::temp_dir().join(format!("hev-kek-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("kek.age");
+        kek.write_identity(&path).unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o400);
+        let loaded = AgeKek::read_identity(&path).unwrap();
+        let dek = [1u8; 32];
+        let wrapped = loaded.wrap_dek(&dek).unwrap();
+        assert_eq!(&*kek.unwrap_dek(&wrapped).unwrap(), &dek);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn read_identity_rejects_missing_secret_line() {
+        let dir = std::env::temp_dir().join(format!("hev-kek-bad-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("bad.age");
+        fs::write(&path, "# no secret here\n").unwrap();
+        assert!(matches!(AgeKek::read_identity(&path), Err(Error::Identity)));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_identity_creates_parent_directory() {
+        let kek = AgeKek::generate();
+        let dir = std::env::temp_dir().join(format!("hev-kek-nested-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("kek.age");
+        kek.write_identity(&path).unwrap();
+        assert!(path.is_file());
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

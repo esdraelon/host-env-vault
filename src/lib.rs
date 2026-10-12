@@ -14,6 +14,7 @@ pub mod kek;
 pub mod profile;
 pub mod render;
 pub mod serve;
+pub mod slot;
 
 pub use bundle::{open, seal, Entry, Opened};
 pub use error::Error;

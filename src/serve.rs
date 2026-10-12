@@ -393,4 +393,60 @@ mod tests {
         assert!(bind_runtime_socket(&dir, ProfileId::DenariusWeb).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn dispatch_rejects_bad_opcode_and_body_length() {
+        let dek = random_array::<32>().unwrap();
+        let denied = dispatch(ProfileId::DenariusWorker, &dek, 99, &[]);
+        assert_eq!(denied.status, ST_DENIED);
+        let short = dispatch(ProfileId::DenariusWorker, &dek, OP_WRAP, &[0u8; 8]);
+        assert_eq!(short.status, ST_DENIED);
+    }
+
+    #[test]
+    fn load_runtime_keys_errors_when_runtime_bundle_is_missing() {
+        let dir = std::env::temp_dir().join(format!("hev-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let kek = AgeKek::generate();
+        assert!(matches!(
+            load_runtime_keys(&dir, &kek),
+            Err(Error::Io(_))
+        ));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_runtime_keys_detects_profile_mismatch_in_bundle() {
+        let kek = AgeKek::generate();
+        let dir = std::env::temp_dir().join(format!("hev-mismatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let web = bundle::seal(
+            ProfileId::DenariusWeb,
+            vec![Entry {
+                name: "DB_PASS".to_owned(),
+                kind: Kind::Env,
+                bytes: Zeroizing::new(b"x".to_vec()),
+            }],
+            &kek,
+        )
+        .unwrap();
+        std::fs::write(dir.join("denarius-worker.hev"), &web).unwrap();
+        assert!(matches!(
+            load_runtime_keys(&dir, &kek),
+            Err(Error::ProfileMismatch { .. })
+        ));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn wait_for_socket_times_out_without_connection() {
+        let dir = std::env::temp_dir().join(format!("hev-poll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let listener = bind_runtime_socket(&dir, ProfileId::DenariusWorker).unwrap();
+        assert!(!wait_for_socket(&listener, std::time::Duration::from_millis(10)).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

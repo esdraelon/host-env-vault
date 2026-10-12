@@ -237,4 +237,41 @@ mod tests {
         assert_eq!(mode.chown_uid, Some(0));
         assert_eq!(mode.chown_gid, Some(33));
     }
+
+    #[test]
+    fn render_creates_dest_and_read_staging_round_trips() {
+        let dest = scratch();
+        render(
+            &dest,
+            &[
+                entry(Kind::Env, "DB_PASS", "pw"),
+                entry(Kind::File, "teller.key", "pem"),
+            ],
+            RenderMode::from_gid(None),
+        )
+        .unwrap();
+        let entries = read_staging(&dest).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "DB_PASS");
+        assert_eq!(&entries[0].bytes[..], b"pw");
+        assert_eq!(entries[1].name, "teller.key");
+        fs::remove_dir_all(dest).unwrap();
+    }
+
+    #[test]
+    fn read_staging_skips_comments_and_rejects_bad_env_lines() {
+        let dest = scratch();
+        fs::write(dest.join("secrets.env"), "# comment\n\nBADLINE\n").unwrap();
+        assert!(read_staging(&dest).is_err());
+        fs::remove_dir_all(dest).unwrap();
+    }
+
+    #[test]
+    fn render_refuses_non_directory_dest() {
+        let dest = scratch();
+        let file = dest.join("not-dir");
+        fs::write(&file, b"x").unwrap();
+        assert!(render(&file, &[], RenderMode::from_gid(None)).is_err());
+        fs::remove_dir_all(dest).unwrap();
+    }
 }

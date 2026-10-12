@@ -232,4 +232,22 @@ mod tests {
         assert!(valid_name("teller.key"));
         assert!(valid_name("STRIPE_SECRET_KEY"));
     }
+
+    #[test]
+    fn kind_tags_round_trip_and_unknown_profile_errors() {
+        assert_eq!(Kind::Env.as_str(), "env");
+        assert_eq!(Kind::File.as_str(), "file");
+        assert_eq!(Kind::from_tag(1), Some(Kind::Env));
+        assert_eq!(Kind::from_tag(2), Some(Kind::File));
+        assert_eq!(Kind::from_tag(99), None);
+        assert!(ProfileId::parse("not-a-profile").is_err());
+    }
+
+    #[test]
+    fn env_values_must_be_printable_single_line() {
+        assert!(!valid_env_value(b""));
+        assert!(!valid_env_value(b"has\nline"));
+        assert!(!valid_env_value(b"#comment"));
+        assert!(valid_env_value(b"ok-value"));
+    }
 }

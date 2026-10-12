@@ -122,9 +122,17 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M1
+Resume from: M2
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
+
+Coverage command (Homebrew LLVM; use a dedicated `CARGO_TARGET_DIR`, not the same tree `cargo mutants` writes to):
+
+```bash
+export LLVM_COV=/opt/homebrew/Cellar/llvm/22.1.8/bin/llvm-cov
+export LLVM_PROFDATA=/opt/homebrew/Cellar/llvm/22.1.8/bin/llvm-profdata
+CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-only
+```
 
 - [x] **M0** `stack/m00-spike` — Record the uncommitted spike, README, packaging unit, and this plan. Hygiene only: do not start the slot table. `cargo test` must pass. Coverage and mutation gates are waived on this commit because M1 replaces the heap design.
 
@@ -133,7 +141,15 @@ Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage o
 - Branch: `stack/m00-spike`
 - Commit: `2e89927e0d7fd1bb6a2ae3ab6ce1d7389707d42c`
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target cargo test` (full, no filter) — passed; coverage and `cargo-mutants` waived for M0.
-- [ ] **M1** `stack/m01-slot-table` — Slot table. Fixed arrays, lengths, wipe, and generation. Unit tests: oversize names and values are rejected, a wipe zeros the whole slot including unused tails, a stale generation cannot write back.
+- [x] **M1** `stack/m01-slot-table` — Slot table. Fixed arrays, lengths, wipe, and generation. Unit tests: oversize names and values are rejected, a wipe zeros the whole slot including unused tails, a stale generation cannot write back.
+
+### M1 completion
+
+- Branch: `stack/m01-slot-table`
+- Commit: `3c7d71b0b13ac7a4fbabf67d1795fee9fa5112e1`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo test` (54 tests, full suite) — passed; line coverage **95.93%** on `src/` (`cargo llvm-cov --lib`, see command above); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01-mutants cargo mutants --file src/slot.rs` — **66/81 caught (81.5%)** on M1 scope.
+- Log-tested decision branches (separate `slot::log_tests` module): reject oversize name, reject oversize secret, reject oversize document, slot wipe, stale generation reject, sweep expired lease.
+- Spike modules gained coverage-only tests where needed to hold the 95% crate gate; slot table is not yet wired into bundle/render/serve commands.
 - [ ] **M2** `stack/m02-catalog-port` — Catalog port. Load a profile definition into a slot from the SSM port. No application enum in the binary. Unit tests: an entry outside the catalog is refused.
 - [ ] **M3** `stack/m03-local-bundle` — Local bundle. Seal and open one profile through a slot. The age identity stays on the host. Unit tests: a relabeled profile name does not decrypt, a tampered ciphertext does not open.
 - [ ] **M4** `stack/m04-sync` — Sync command. Pull the catalog and each secret, seal bundles, and keep the previous bundle when the pull fails. Integration test with a fake SSM: success replaces the bundle, a failed refresh leaves the previous bytes, and only one profile occupies a slot at a time.
