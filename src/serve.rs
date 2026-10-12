@@ -46,9 +46,9 @@ pub fn load_runtime_keys(state_dir: &Path, kek: &AgeKek) -> Result<Vec<RuntimeKe
         let path = state_dir.join(format!("{}.hev", profile.as_str()));
         let bytes = std::fs::read(&path)?;
         let opened = bundle::open(&bytes, kek)?;
-        if opened.profile != profile {
+        if opened.profile != profile.as_str() {
             return Err(Error::ProfileMismatch {
-                found: opened.profile.as_str().to_owned(),
+                found: opened.profile,
                 expected: profile.as_str().to_owned(),
             });
         }

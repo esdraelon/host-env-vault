@@ -325,6 +325,39 @@ impl Slot {
         &self.profile_name[..self.profile_name_len as usize]
     }
 
+    pub fn secret_count(&self) -> u8 {
+        self.secret_count
+    }
+
+    pub fn document_count(&self) -> u8 {
+        self.document_count
+    }
+
+    pub fn secret_name_bytes(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.secret_count as usize {
+            return None;
+        }
+        let entry = &self.secrets[index];
+        Some(&entry.name[..entry.name_len as usize])
+    }
+
+    pub fn document_name_bytes(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.document_count as usize {
+            return None;
+        }
+        let entry = &self.documents[index];
+        Some(&entry.name[..entry.name_len as usize])
+    }
+
+    pub fn document_bytes(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.document_count as usize {
+            return None;
+        }
+        let entry = &self.documents[index];
+        let len = entry.data_len as usize;
+        Some(&entry.data[..len])
+    }
+
     #[cfg(test)]
     pub fn all_fixed_storage_zero(&self) -> bool {
         self.profile_name.iter().all(|b| *b == 0)

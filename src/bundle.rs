@@ -20,7 +20,7 @@ pub struct Entry {
 }
 
 pub struct Opened {
-    pub profile: ProfileId,
+    pub profile: String,
     pub entries: Vec<Entry>,
     pub dek: Zeroizing<[u8; 32]>,
 }
@@ -30,6 +30,14 @@ pub struct Opened {
 /// relabeled header does not decrypt.
 pub fn seal(profile: ProfileId, entries: Vec<Entry>, kek: &AgeKek) -> Result<Vec<u8>, Error> {
     check_entries(profile, &entries)?;
+    seal_bytes(profile.as_str(), entries, kek)
+}
+
+/// Seal a profile name and entries into an `HEV1` bundle. Allowlist checks are
+/// the caller's job (catalog on sync, `ProfileId` policy on legacy CLI).
+pub fn seal_bytes(profile: &str, entries: Vec<Entry>, kek: &AgeKek) -> Result<Vec<u8>, Error> {
+    validate_profile_name(profile)?;
+    check_entry_shapes(&entries)?;
     let dek_bytes = random_array::<32>()?;
     let dek = Zeroizing::new(dek_bytes);
     let payload = encode_payload(profile, &entries)?;
@@ -40,7 +48,7 @@ pub fn seal(profile: ProfileId, entries: Vec<Entry>, kek: &AgeKek) -> Result<Vec
     let mut out = Vec::new();
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
-    let name = profile.as_str().as_bytes();
+    let name = profile.as_bytes();
     out.push(u8::try_from(name.len()).expect("profile name fits in u8"));
     out.extend_from_slice(name);
     push_u32(
@@ -58,41 +66,57 @@ pub fn seal(profile: ProfileId, entries: Vec<Entry>, kek: &AgeKek) -> Result<Vec
 }
 
 pub fn open(bundle: &[u8], kek: &AgeKek) -> Result<Opened, Error> {
+    let opened = open_bytes(bundle, kek)?;
+    let profile = ProfileId::parse(&opened.profile)?;
+    check_entries(profile, &opened.entries)?;
+    Ok(opened)
+}
+
+/// Decrypt an `HEV1` bundle without catalog or legacy policy checks.
+pub fn open_bytes(bundle: &[u8], kek: &AgeKek) -> Result<Opened, Error> {
     let header = split_header(bundle)?;
     let dek = kek.unwrap_dek(header.wrapped_dek)?;
+    let profile = header.profile.clone();
     let payload = aead_decrypt(
         &dek,
         &header.nonce,
         header.ciphertext,
-        &bundle_aad(header.profile),
+        &bundle_aad(&profile),
     )?;
-    let entries = decode_payload(header.profile, &payload)?;
+    let entries = decode_payload(&profile, &payload)?;
     Ok(Opened {
-        profile: header.profile,
+        profile,
         entries,
         dek,
     })
 }
 
 fn check_entries(profile: ProfileId, entries: &[Entry]) -> Result<(), Error> {
-    if entries.is_empty() {
-        return Err(Error::EmptyBundle);
-    }
-    if entries.len() > MAX_ENTRIES {
-        return Err(Error::RuntimeBody);
-    }
+    check_entry_shapes(entries)?;
     let policy = profile.policy();
-    let mut seen = Vec::with_capacity(entries.len());
     for entry in entries {
-        if !valid_name(&entry.name) {
-            return Err(Error::InvalidName(entry.name.clone()));
-        }
         if !policy.allows(entry.kind, &entry.name) {
             return Err(Error::EntryNotAllowed {
                 name: entry.name.clone(),
                 kind: entry.kind.as_str(),
                 profile: profile.as_str().to_owned(),
             });
+        }
+    }
+    Ok(())
+}
+
+fn check_entry_shapes(entries: &[Entry]) -> Result<(), Error> {
+    if entries.is_empty() {
+        return Err(Error::EmptyBundle);
+    }
+    if entries.len() > MAX_ENTRIES {
+        return Err(Error::RuntimeBody);
+    }
+    let mut seen = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if !valid_name(&entry.name) {
+            return Err(Error::InvalidName(entry.name.clone()));
         }
         if entry.kind == Kind::Env && !valid_env_value(&entry.bytes) {
             return Err(Error::InvalidEnvValue(entry.name.clone()));
@@ -109,15 +133,22 @@ fn check_entries(profile: ProfileId, entries: &[Entry]) -> Result<(), Error> {
     Ok(())
 }
 
-fn bundle_aad(profile: ProfileId) -> Vec<u8> {
+fn validate_profile_name(name: &str) -> Result<(), Error> {
+    if name.is_empty() || name.len() > crate::slot::NAME_MAX_BYTES {
+        return Err(Error::InvalidName(name.to_owned()));
+    }
+    Ok(())
+}
+
+fn bundle_aad(profile: &str) -> Vec<u8> {
     let mut aad = Vec::from(BUNDLE_AAD_PREFIX);
-    aad.extend_from_slice(profile.as_str().as_bytes());
+    aad.extend_from_slice(profile.as_bytes());
     aad
 }
 
-fn encode_payload(profile: ProfileId, entries: &[Entry]) -> Result<Vec<u8>, Error> {
+fn encode_payload(profile: &str, entries: &[Entry]) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
-    let name = profile.as_str().as_bytes();
+    let name = profile.as_bytes();
     out.push(u8::try_from(name.len()).expect("profile name fits"));
     out.extend_from_slice(name);
     push_u16(
@@ -138,15 +169,15 @@ fn encode_payload(profile: ProfileId, entries: &[Entry]) -> Result<Vec<u8>, Erro
     Ok(out)
 }
 
-fn decode_payload(expected: ProfileId, payload: &[u8]) -> Result<Vec<Entry>, Error> {
+fn decode_payload(expected: &str, payload: &[u8]) -> Result<Vec<Entry>, Error> {
     let mut cursor = Cursor::new(payload);
     let name_len = cursor.u8()? as usize;
     let name = std::str::from_utf8(cursor.bytes(name_len)?).map_err(|_| Error::BundleAuth)?;
-    let profile = ProfileId::parse(name)?;
-    if profile != expected {
+    validate_profile_name(name).map_err(|_| Error::BundleAuth)?;
+    if name != expected {
         return Err(Error::ProfileMismatch {
-            found: profile.as_str().to_owned(),
-            expected: expected.as_str().to_owned(),
+            found: name.to_owned(),
+            expected: expected.to_owned(),
         });
     }
     let count = cursor.u16()? as usize;
@@ -170,12 +201,12 @@ fn decode_payload(expected: ProfileId, payload: &[u8]) -> Result<Vec<Entry>, Err
     if !cursor.is_empty() {
         return Err(Error::BundleAuth);
     }
-    check_entries(expected, &entries)?;
+    check_entry_shapes(&entries)?;
     Ok(entries)
 }
 
 struct Header<'a> {
-    profile: ProfileId,
+    profile: String,
     wrapped_dek: &'a [u8],
     nonce: [u8; 24],
     ciphertext: &'a [u8],
@@ -192,7 +223,8 @@ fn split_header(bundle: &[u8]) -> Result<Header<'_>, Error> {
     }
     let name_len = cursor.u8()? as usize;
     let name = std::str::from_utf8(cursor.bytes(name_len)?).map_err(|_| Error::BundleAuth)?;
-    let profile = ProfileId::parse(name)?;
+    validate_profile_name(name).map_err(|_| Error::BundleAuth)?;
+    let profile = name.to_owned();
     let wrapped_len = cursor.u32()? as usize;
     let wrapped = cursor.bytes(wrapped_len)?;
     let mut nonce = [0u8; 24];
@@ -352,7 +384,7 @@ mod tests {
         )
         .unwrap();
         let opened = open(&bundle, &kek).unwrap();
-        assert_eq!(opened.profile, ProfileId::DenariusWeb);
+        assert_eq!(opened.profile, "denarius-web");
         assert_eq!(opened.entries.len(), 2);
         assert_eq!(opened.entries[0].name, "DB_PASS");
         assert_eq!(&opened.entries[0].bytes[..], b"db-secret");
@@ -452,6 +484,105 @@ mod tests {
         assert!(matches!(
             open_key(&dek, b"aad", &[0u8; 8]),
             Err(Error::RuntimeBody)
+        ));
+        assert!(matches!(
+            open_key(&dek, b"aad", &[0u8; 23]),
+            Err(Error::RuntimeBody)
+        ));
+    }
+
+    #[test]
+    fn seal_bytes_rejects_bad_profile_names() {
+        let kek = kek();
+        assert!(matches!(
+            seal_bytes("", vec![env("DB_PASS", "x")], &kek),
+            Err(Error::InvalidName(_))
+        ));
+        let long = "a".repeat(crate::slot::NAME_MAX_BYTES + 1);
+        assert!(matches!(
+            seal_bytes(&long, vec![env("DB_PASS", "x")], &kek),
+            Err(Error::InvalidName(_))
+        ));
+    }
+
+    #[test]
+    fn seal_bytes_rejects_bad_file_shapes() {
+        let kek = kek();
+        let empty_file = Entry {
+            name: "key.pem".into(),
+            kind: Kind::File,
+            bytes: Zeroizing::new(vec![]),
+        };
+        assert!(matches!(
+            seal_bytes("denarius-web", vec![empty_file], &kek),
+            Err(Error::InvalidEnvValue(_))
+        ));
+        let huge = Entry {
+            name: "key.pem".into(),
+            kind: Kind::File,
+            bytes: Zeroizing::new(vec![b'x'; MAX_FILE_LEN + 1]),
+        };
+        assert!(matches!(
+            seal_bytes("denarius-web", vec![huge], &kek),
+            Err(Error::InvalidEnvValue(_))
+        ));
+    }
+
+    #[test]
+    fn seal_bytes_rejects_too_many_entries() {
+        let kek = kek();
+        let entries: Vec<Entry> = (0..MAX_ENTRIES + 1)
+            .map(|i| env(&format!("E{i:02}"), "v"))
+            .collect();
+        assert!(matches!(
+            seal_bytes("denarius-web", entries, &kek),
+            Err(Error::RuntimeBody)
+        ));
+    }
+
+    #[test]
+    fn decode_payload_rejects_bad_counts_and_trailing_bytes() {
+        let profile = "denarius-web";
+        let mut header = vec![profile.len() as u8];
+        header.extend_from_slice(profile.as_bytes());
+        header.extend_from_slice(&0u16.to_le_bytes());
+        assert!(matches!(
+            decode_payload(profile, &header),
+            Err(Error::BundleAuth)
+        ));
+
+        let mut too_many = vec![profile.len() as u8];
+        too_many.extend_from_slice(profile.as_bytes());
+        too_many.extend_from_slice(&(MAX_ENTRIES as u16 + 1).to_le_bytes());
+        assert!(matches!(
+            decode_payload(profile, &too_many),
+            Err(Error::BundleAuth)
+        ));
+
+        let mut trailing = vec![profile.len() as u8];
+        trailing.extend_from_slice(profile.as_bytes());
+        trailing.extend_from_slice(&1u16.to_le_bytes());
+        trailing.push(Kind::Env.tag());
+        trailing.push(7);
+        trailing.extend_from_slice(b"DB_PASS");
+        trailing.extend_from_slice(&1u32.to_le_bytes());
+        trailing.push(b'x');
+        trailing.push(0xff);
+        assert!(matches!(
+            decode_payload(profile, &trailing),
+            Err(Error::BundleAuth)
+        ));
+    }
+
+    #[test]
+    fn decode_payload_rejects_wrong_embedded_profile_name() {
+        let expected = "denarius-web";
+        let mut payload = vec![15u8];
+        payload.extend_from_slice(b"denarius-worker");
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        assert!(matches!(
+            decode_payload(expected, &payload),
+            Err(Error::ProfileMismatch { .. })
         ));
     }
 }

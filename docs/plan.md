@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M3
+Resume from: M4
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -159,7 +159,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m02 cargo test` (82 tests, full suite) — passed; line coverage **96.14%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m02-mutants cargo mutants --file 'src/catalog/*.rs' --file src/port/ssm.rs` — **40/40 caught (100%)** on M2 scope (11 unviable).
 - Log-tested decision branches (separate `catalog::log_tests` module): catalog parse failure, catalog refuse seal entry, catalog refuse serve entry, catalog refuse serve on non-socket profile.
 - Spike `ProfileId` remains for legacy bundle/render/serve tests; catalog load, allowlist checks, and slot bind use string profile names from SSM JSON/TOML only.
-- [ ] **M3** `stack/m03-local-bundle` — Local bundle. Seal and open one profile through a slot. The age identity stays on the host. Unit tests: a relabeled profile name does not decrypt, a tampered ciphertext does not open.
+- [x] **M3** `stack/m03-local-bundle` — Local bundle. Seal and open one profile through a slot. The age identity stays on the host. Unit tests: a relabeled profile name does not decrypt, a tampered ciphertext does not open.
+
+### M3 completion
+
+- Branch: `stack/m03-local-bundle`
+- Commit: `e107c5d594a933833266f9e27d773da2bbb5a1ea`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m03 cargo test` (100 tests, full suite) — passed; line coverage **96.40%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m03-mutants cargo mutants --file src/bundle.rs --file src/local_bundle/mod.rs` — **88/99 caught (88.9%)** on M3 scope (11 unviable).
+- Log-tested decision branches (separate `local_bundle::log_tests` module): local bundle seal from slot, local bundle open into slot, local bundle refuse open not in catalog, local bundle refuse open entry.
+- `seal_profile_in_slot` / `open_profile_into_slot` validate against the catalog allowlist, load one profile into a fixed slot, and emit `HEV1` bundles via unchanged age KEK wrap; legacy `ProfileId` CLI seal/open keeps spike policy checks on `open`.
 - [ ] **M4** `stack/m04-sync` — Sync command. Pull the catalog and each secret, seal bundles, and keep the previous bundle when the pull fails. Integration test with a fake SSM: success replaces the bundle, a failed refresh leaves the previous bytes, and only one profile occupies a slot at a time.
 - [ ] **M5** `stack/m05-render` — Render command. Write an empty destination from the local bundle. Integration test: file modes, refusal of a dirty destination, and no call to the SSM port.
 - [ ] **M6** `stack/m06-serve` — Serve command. One socket per runtime profile. The request names an entry. The lease wipes the slot at 2000 ms. Integration test: a peer uid mismatch is denied, a name from another profile is denied, and a request that overruns the lease observes a wiped slot.

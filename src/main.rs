@@ -109,9 +109,9 @@ fn run() -> Result<(), host_env_vault::Error> {
             let kek = AgeKek::read_identity(&identity)?;
             let bytes = std::fs::read(&bundle)?;
             let opened = host_env_vault::open(&bytes, &kek)?;
-            if opened.profile != profile {
+            if opened.profile != profile.as_str() {
                 return Err(host_env_vault::Error::ProfileMismatch {
-                    found: opened.profile.as_str().to_owned(),
+                    found: opened.profile,
                     expected: profile.as_str().to_owned(),
                 });
             }
