@@ -1,0 +1,15 @@
+[package]
+name = "host-env-vault"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Spike of the host profile vault for Denarius and the Amtgard IDP"
+
+[dependencies]
+age = "0.12.1"
+chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
+clap = { version = "4.6.7", features = ["derive"] }
+getrandom = "0.4.3"
+libc = "0.2.190"
+thiserror = "2.0.21"
+zeroize = { version = "1.9.1", features = ["derive"] }

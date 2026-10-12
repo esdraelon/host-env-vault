@@ -1,0 +1,19 @@
+[Unit]
+Description=Host env vault runtime key wrap
+Before=docker.service
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/host-env-vault serve --identity /etc/host-env-vault/kek.age --state-dir /var/lib/host-env-vault --runtime-dir /run/host-env-vault --poll-secs 3600
+RuntimeDirectory=host-env-vault
+StateDirectory=host-env-vault
+ConfigurationDirectory=host-env-vault
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/host-env-vault
+
+[Install]
+WantedBy=multi-user.target
