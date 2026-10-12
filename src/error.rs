@@ -38,6 +38,12 @@ pub enum Error {
     PeerUid { actual: u32 },
     #[error("no runtime profile bundles in {0}")]
     NoRuntimeBundles(PathBuf),
+    #[error("catalog parse failed: {0}")]
+    CatalogParse(String),
+    #[error("profile `{0}` is not in the catalog")]
+    NotInCatalog(String),
+    #[error("ssm parameter `{0}` is missing")]
+    SsmMissing(String),
     #[error(transparent)]
     Io(#[from] io::Error),
 }

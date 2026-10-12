@@ -9,16 +9,23 @@
 compile_error!("host-env-vault is a unix host agent");
 
 pub mod bundle;
+pub mod catalog;
 pub mod error;
 pub mod kek;
+pub mod port;
 pub mod profile;
 pub mod render;
 pub mod serve;
 pub mod slot;
 
 pub use bundle::{open, seal, Entry, Opened};
+pub use catalog::{
+    bind_catalog_profile, load_catalog_from_ssm, parse_catalog_text, validate_seal_entries,
+    validate_serve_entry, Catalog, ProfileDefinition, SealEntry, DEFAULT_CATALOG_PARAMETER,
+};
 pub use error::Error;
 pub use kek::AgeKek;
+pub use port::{MemorySsm, SsmPort};
 pub use profile::{Kind, ProfileId};
 pub use render::{read_staging, render, RenderMode};
 pub use serve::{dispatch, load_runtime_keys, RuntimeKeys};
