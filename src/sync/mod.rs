@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
-use crate::catalog::{load_catalog_from_ssm, parse_catalog_text, Catalog, ProfileDefinition, SealEntry};
+use crate::catalog::{
+    parse_catalog_text, write_catalog_snapshot, Catalog, ProfileDefinition, SealEntry,
+};
 use crate::catalog::DEFAULT_CATALOG_PARAMETER;
 use crate::error::Error;
 use crate::kek::AgeKek;
@@ -77,7 +79,7 @@ pub fn sync_from_ssm(
     table: &mut SlotTable,
     options: &SyncOptions,
 ) -> Result<(), Error> {
-    let catalog = load_catalog_from_ssm(ssm, &options.catalog_param)?;
+    let catalog = pull_and_persist_catalog(ssm, &options.catalog_param, &options.state_dir)?;
     tracing::info!(
         target: "host_env_vault::sync",
         profile_count = catalog.profile_names().count(),
@@ -234,6 +236,16 @@ fn write_bundle_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+fn pull_and_persist_catalog(
+    ssm: &dyn SsmPort,
+    catalog_param: &str,
+    state_dir: &Path,
+) -> Result<Catalog, Error> {
+    let text = ssm.get_parameter(catalog_param).map_err(map_ssm)?;
+    write_catalog_snapshot(state_dir, &text)?;
+    parse_catalog_text(&text)
+}
+
 fn map_ssm(err: SsmError) -> Error {
     match err {
         SsmError::NotFound(name) => Error::SsmMissing(name),
@@ -253,8 +265,9 @@ pub fn sync_catalog_from_text(
     table: &mut SlotTable,
     state_dir: &Path,
 ) -> Result<(), Error> {
-    let catalog = parse_catalog_text(text)?;
     std::fs::create_dir_all(state_dir)?;
+    write_catalog_snapshot(state_dir, text)?;
+    let catalog = parse_catalog_text(text)?;
     let mut names: Vec<_> = catalog.profile_names().collect();
     names.sort_unstable();
     let mut failures = 0usize;

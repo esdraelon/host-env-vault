@@ -147,6 +147,14 @@ impl ProfileDefinition {
         }
     }
 
+    /// Entries written by `render` (injected at container start, not runtime socket).
+    pub fn allows_inject(&self, kind: Kind, name: &str) -> bool {
+        match kind {
+            Kind::Env => name_in_list(&self.inject_env, name),
+            Kind::File => name_in_list(&self.inject_files, name),
+        }
+    }
+
     fn from_raw(raw: ProfileDefinitionRaw) -> Result<Self, Error> {
         validate_name_list(&raw.inject, "inject")?;
         validate_name_list(&raw.runtime, "runtime")?;
@@ -254,6 +262,10 @@ mod tests {
         assert!(worker.allows_seal(Kind::Env, "DB_PASS"));
         assert!(worker.allows_serve(Kind::Env, "APP_KEY"));
         assert!(!worker.allows_serve(Kind::Env, "DB_PASS"));
+        assert!(worker.allows_inject(Kind::Env, "DB_PASS"));
+        assert!(!worker.allows_inject(Kind::Env, "APP_KEY"));
+        assert!(!worker.allows_inject(Kind::File, "teller.key"));
+        assert!(!worker.allows_inject(Kind::File, "teller.pem"));
     }
 
     #[test]

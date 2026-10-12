@@ -3,10 +3,14 @@
 
 mod guard;
 mod load;
+mod local;
 mod parse;
 
 pub use guard::{validate_seal_entries, validate_serve_entry, SealEntry};
 pub use load::{bind_catalog_profile, load_catalog_from_ssm};
+pub use local::{
+    catalog_snapshot_path, load_catalog_snapshot, write_catalog_snapshot, CATALOG_SNAPSHOT_FILE,
+};
 pub use parse::{parse_catalog_text, Catalog, ProfileDefinition};
 
 pub const DEFAULT_CATALOG_PARAMETER: &str = "/amtgard/vault/profiles";

@@ -16,6 +16,7 @@ pub mod kek;
 pub mod port;
 pub mod profile;
 pub mod render;
+pub mod render_cmd;
 pub mod serve;
 pub mod slot;
 pub mod sync;
@@ -23,14 +24,18 @@ pub mod sync;
 pub use bundle::{open, open_bytes, seal, seal_bytes, Entry, Opened};
 pub use local_bundle::{open_profile_into_slot, seal_profile_in_slot};
 pub use catalog::{
-    bind_catalog_profile, load_catalog_from_ssm, parse_catalog_text, validate_seal_entries,
-    validate_serve_entry, Catalog, ProfileDefinition, SealEntry, DEFAULT_CATALOG_PARAMETER,
+    bind_catalog_profile, catalog_snapshot_path, load_catalog_from_ssm, load_catalog_snapshot,
+    parse_catalog_text, validate_seal_entries, validate_serve_entry, write_catalog_snapshot,
+    Catalog, ProfileDefinition, SealEntry, CATALOG_SNAPSHOT_FILE, DEFAULT_CATALOG_PARAMETER,
 };
 pub use error::Error;
 pub use kek::AgeKek;
 pub use port::{MemorySsm, SsmPort};
 pub use profile::{Kind, ProfileId};
 pub use render::{read_staging, render, RenderMode};
+pub use render_cmd::{
+    render_from_vault, render_profile_with_catalog, RenderOptions, RENDER_SLOT_INDEX,
+};
 pub use serve::{dispatch, load_runtime_keys, RuntimeKeys};
 pub use sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter, sync_from_ssm, SyncOptions,

@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M5
+Resume from: M6
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -177,7 +177,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04 cargo test` (121 tests, full suite) — passed; line coverage **95.55%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04-mutants cargo mutants --file 'src/sync/*.rs'` — **25/26 caught (96.2%)** on M4 scope (7 unviable, 1 missed: empty-parent guard in atomic write).
 - Log-tested decision branches (separate `sync::log_tests` module): sync catalog loaded and bundle replaced, sync profile failed keeping bundle, sync reject oversize parameter, sync created host identity on first run.
 - `sync` CLI subcommand (`--identity`, `--state-dir`, `--catalog-param`) calls AWS SSM via SDK in `main`; library integration tests use `MemorySsm`. Pulls `/amtgard/<profile>/<entry>`, seals through slot 0, atomically replaces `<profile>.hev`, mints age identity when missing.
-- [ ] **M5** `stack/m05-render` — Render command. Write an empty destination from the local bundle. Integration test: file modes, refusal of a dirty destination, and no call to the SSM port.
+- [x] **M5** `stack/m05-render` — Render command. Write an empty destination from the local bundle. Integration test: file modes, refusal of a dirty destination, and no call to the SSM port.
+
+### M5 completion
+
+- Branch: `stack/m05-render`
+- Commit: `35b98cef1b55b0cbbadf697a6ffc8f7bee62b6cc`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m05 cargo test` (136 tests, full suite) — passed; line coverage **95.38%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m05-mutants cargo mutants --file 'src/render_cmd/*.rs' --file src/catalog/local.rs` — **13/14 caught (92.9%)** on M5 scope (4 unviable, 1 missed: empty-parent guard in catalog snapshot write).
+- Log-tested decision branches (separate `render_cmd::log_tests` module): render inject-only skipping runtime entries, render wrote inject destination, render refuse profile not in catalog, render does not skip when all entries are inject (negative log check); local bundle open during render reuses existing log line.
+- Sync persists `catalog.json` beside bundles; `render` CLI uses `--profile`, `--identity`, `--state-dir`, `--dest`, optional `--gid` override. Opens `.hev` through slot 1, filters catalog inject lists, refuses non-empty dest, no SSM at render time.
 - [ ] **M6** `stack/m06-serve` — Serve command. One socket per runtime profile. The request names an entry. The lease wipes the slot at 2000 ms. Integration test: a peer uid mismatch is denied, a name from another profile is denied, and a request that overruns the lease observes a wiped slot.
 - [ ] **M7** `stack/m07-s3-documents` — S3 port. Fill document slots, including nginx site files. Integration test with a fake S3: a file over 100 KB is rejected, and a secret-shaped object is not accepted on this port.
 - [ ] **M8** `stack/m08-hydrate-gh` — GitHub hydrate. Feed each token slot to `gh auth login --with-token`, then switch the active user. Integration test with a fake `gh` that records stdin and the switch user.

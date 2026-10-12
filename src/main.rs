@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use host_env_vault::port::{SsmError, SsmPort};
-use host_env_vault::{AgeKek, ProfileId, RenderMode};
+use host_env_vault::{AgeKek, ProfileId};
 
 mod aws_ssm {
     use super::{SsmError, SsmPort};
@@ -83,17 +83,17 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Decrypt one profile into an empty directory of mode-0400 files.
+    /// Decrypt one profile from local bundles into an empty destination.
     Render {
         #[arg(long)]
         profile: String,
         #[arg(long)]
         identity: PathBuf,
-        #[arg(long)]
-        bundle: PathBuf,
+        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
+        state_dir: PathBuf,
         #[arg(long)]
         dest: PathBuf,
-        /// Group that may read the files. Directory stays root-owned.
+        /// Group that may read the files. Overrides the catalog gid when set.
         #[arg(long)]
         gid: Option<u32>,
     },
@@ -182,22 +182,15 @@ fn run() -> Result<(), host_env_vault::Error> {
         Command::Render {
             profile,
             identity,
-            bundle,
+            state_dir,
             dest,
             gid,
         } => {
-            let profile = ProfileId::parse(&profile)?;
             let kek = AgeKek::read_identity(&identity)?;
-            let bytes = std::fs::read(&bundle)?;
-            let opened = host_env_vault::open(&bytes, &kek)?;
-            if opened.profile != profile.as_str() {
-                return Err(host_env_vault::Error::ProfileMismatch {
-                    found: opened.profile,
-                    expected: profile.as_str().to_owned(),
-                });
-            }
-            host_env_vault::render(&dest, &opened.entries, RenderMode::from_gid(gid))?;
-            eprintln!("rendered {} -> {}", profile.as_str(), dest.display());
+            let mut table = host_env_vault::slot::SlotTable::new();
+            let options = host_env_vault::RenderOptions::new(identity, state_dir, dest.clone(), gid);
+            host_env_vault::render_from_vault(&kek, &mut table, &profile, &options)?;
+            eprintln!("rendered {profile} -> {}", dest.display());
         }
         Command::Serve {
             identity,
