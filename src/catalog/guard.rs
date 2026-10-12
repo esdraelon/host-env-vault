@@ -1,4 +1,4 @@
-//! Catalog allowlist checks used by sync/seal and serve stubs until M4/M6 wire commands.
+//! Catalog allowlist checks used by sync/seal and serve.
 
 use crate::catalog::parse::{Catalog, ProfileDefinition};
 use crate::error::Error;

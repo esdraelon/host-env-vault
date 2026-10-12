@@ -44,6 +44,8 @@ pub enum Error {
     NotInCatalog(String),
     #[error("ssm parameter `{0}` is missing")]
     SsmMissing(String),
+    #[error("sync failed for {count} profile(s)")]
+    SyncFailed { count: usize },
     #[error(transparent)]
     Io(#[from] io::Error),
 }

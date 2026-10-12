@@ -18,6 +18,7 @@ pub mod profile;
 pub mod render;
 pub mod serve;
 pub mod slot;
+pub mod sync;
 
 pub use bundle::{open, open_bytes, seal, seal_bytes, Entry, Opened};
 pub use local_bundle::{open_profile_into_slot, seal_profile_in_slot};
@@ -31,3 +32,7 @@ pub use port::{MemorySsm, SsmPort};
 pub use profile::{Kind, ProfileId};
 pub use render::{read_staging, render, RenderMode};
 pub use serve::{dispatch, load_runtime_keys, RuntimeKeys};
+pub use sync::{
+    bundle_path, load_or_create_identity, ssm_entry_parameter, sync_from_ssm, SyncOptions,
+    DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
+};

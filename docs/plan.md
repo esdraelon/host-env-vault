@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M4
+Resume from: M5
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -168,7 +168,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m03 cargo test` (100 tests, full suite) — passed; line coverage **96.40%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m03-mutants cargo mutants --file src/bundle.rs --file src/local_bundle/mod.rs` — **88/99 caught (88.9%)** on M3 scope (11 unviable).
 - Log-tested decision branches (separate `local_bundle::log_tests` module): local bundle seal from slot, local bundle open into slot, local bundle refuse open not in catalog, local bundle refuse open entry.
 - `seal_profile_in_slot` / `open_profile_into_slot` validate against the catalog allowlist, load one profile into a fixed slot, and emit `HEV1` bundles via unchanged age KEK wrap; legacy `ProfileId` CLI seal/open keeps spike policy checks on `open`.
-- [ ] **M4** `stack/m04-sync` — Sync command. Pull the catalog and each secret, seal bundles, and keep the previous bundle when the pull fails. Integration test with a fake SSM: success replaces the bundle, a failed refresh leaves the previous bytes, and only one profile occupies a slot at a time.
+- [x] **M4** `stack/m04-sync` — Sync command. Pull the catalog and each secret, seal bundles, and keep the previous bundle when the pull fails. Integration test with a fake SSM: success replaces the bundle, a failed refresh leaves the previous bytes, and only one profile occupies a slot at a time.
+
+### M4 completion
+
+- Branch: `stack/m04-sync`
+- Commit: `1014242b8b7a740de1d9a887db12048ece0b7dbd`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04 cargo test` (121 tests, full suite) — passed; line coverage **95.55%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04-mutants cargo mutants --file 'src/sync/*.rs'` — **25/26 caught (96.2%)** on M4 scope (7 unviable, 1 missed: empty-parent guard in atomic write).
+- Log-tested decision branches (separate `sync::log_tests` module): sync catalog loaded and bundle replaced, sync profile failed keeping bundle, sync reject oversize parameter, sync created host identity on first run.
+- `sync` CLI subcommand (`--identity`, `--state-dir`, `--catalog-param`) calls AWS SSM via SDK in `main`; library integration tests use `MemorySsm`. Pulls `/amtgard/<profile>/<entry>`, seals through slot 0, atomically replaces `<profile>.hev`, mints age identity when missing.
 - [ ] **M5** `stack/m05-render` — Render command. Write an empty destination from the local bundle. Integration test: file modes, refusal of a dirty destination, and no call to the SSM port.
 - [ ] **M6** `stack/m06-serve` — Serve command. One socket per runtime profile. The request names an entry. The lease wipes the slot at 2000 ms. Integration test: a peer uid mismatch is denied, a name from another profile is denied, and a request that overruns the lease observes a wiped slot.
 - [ ] **M7** `stack/m07-s3-documents` — S3 port. Fill document slots, including nginx site files. Integration test with a fake S3: a file over 100 KB is rejected, and a secret-shaped object is not accepted on this port.
