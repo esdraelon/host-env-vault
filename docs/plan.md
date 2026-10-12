@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M6
+Resume from: M7
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -186,7 +186,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m05 cargo test` (136 tests, full suite) — passed; line coverage **95.38%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m05-mutants cargo mutants --file 'src/render_cmd/*.rs' --file src/catalog/local.rs` — **13/14 caught (92.9%)** on M5 scope (4 unviable, 1 missed: empty-parent guard in catalog snapshot write).
 - Log-tested decision branches (separate `render_cmd::log_tests` module): render inject-only skipping runtime entries, render wrote inject destination, render refuse profile not in catalog, render does not skip when all entries are inject (negative log check); local bundle open during render reuses existing log line.
 - Sync persists `catalog.json` beside bundles; `render` CLI uses `--profile`, `--identity`, `--state-dir`, `--dest`, optional `--gid` override. Opens `.hev` through slot 1, filters catalog inject lists, refuses non-empty dest, no SSM at render time.
-- [ ] **M6** `stack/m06-serve` — Serve command. One socket per runtime profile. The request names an entry. The lease wipes the slot at 2000 ms. Integration test: a peer uid mismatch is denied, a name from another profile is denied, and a request that overruns the lease observes a wiped slot.
+- [x] **M6** `stack/m06-serve` — Serve command. One socket per runtime profile. The request names an entry. The lease wipes the slot at 2000 ms. Integration test: a peer uid mismatch is denied, a name from another profile is denied, and a request that overruns the lease observes a wiped slot.
+
+### M6 completion
+
+- Branch: `stack/m06-serve`
+- Commit: `23378c5c6228998c52834504adc10a38ff7cdf90`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m06 cargo test` (158 tests, full suite) — passed; line coverage **95.38%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m06-mutants cargo mutants --file 'src/serve_cmd/*.rs' --file src/serve.rs` — **48/59 caught (81.4%)** on M6 scope (19 unviable, 11 missed).
+- Log-tested decision branches (separate `serve_cmd::log_tests` module): serve deny runtime entry (catalog refuse inject name), serve returned runtime entry, serve refuse profile without socket, serve deny peer uid.
+- Refactored spike `serve.rs` to entry-name frames and wire I/O; new `serve_cmd` opens local `.hev` bundles through serve slot 2 under the 2000 ms lease with idle sweep, catalog `require_uid`, and `poll_serve_once` for tests. CLI `serve` takes `--profile` and uses catalog peer uid (no SSM at serve time).
 - [ ] **M7** `stack/m07-s3-documents` — S3 port. Fill document slots, including nginx site files. Integration test with a fake S3: a file over 100 KB is rejected, and a secret-shaped object is not accepted on this port.
 - [ ] **M8** `stack/m08-hydrate-gh` — GitHub hydrate. Feed each token slot to `gh auth login --with-token`, then switch the active user. Integration test with a fake `gh` that records stdin and the switch user.
 - [ ] **M9** `stack/m09-mutation` — Mutation closeout. `cargo-mutants` at 80% across the crate. The mutations that must be caught are the bounds checks, the wipe, the generation, the profile mismatch, the lease expiry, and the keep-the-last-bundle path. Fill any gaps the earlier milestones left.

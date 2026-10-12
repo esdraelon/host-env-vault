@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Duration;
-
 use clap::{Parser, Subcommand};
 use host_env_vault::port::{SsmError, SsmPort};
 use host_env_vault::{AgeKek, ProfileId};
@@ -106,18 +104,16 @@ enum Command {
         #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
         catalog_param: String,
     },
-    /// Serve runtime key wrap for profiles that have a socket. No TCP listener.
+    /// Serve runtime entries for one catalog profile with a unix socket.
     Serve {
         #[arg(long)]
-        identity: PathBuf,
+        profile: String,
         #[arg(long)]
+        identity: PathBuf,
+        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
         state_dir: PathBuf,
         #[arg(long)]
         runtime_dir: PathBuf,
-        #[arg(long)]
-        require_uid: Option<u32>,
-        #[arg(long, default_value_t = 3600)]
-        poll_secs: u64,
     },
 }
 
@@ -193,28 +189,26 @@ fn run() -> Result<(), host_env_vault::Error> {
             eprintln!("rendered {profile} -> {}", dest.display());
         }
         Command::Serve {
+            profile,
             identity,
             state_dir,
             runtime_dir,
-            require_uid,
-            poll_secs,
         } => {
             let kek = AgeKek::read_identity(&identity)?;
-            let listener = host_env_vault::serve::bind_runtime_socket(
-                &runtime_dir,
-                ProfileId::DenariusWorker,
-            )?;
-            eprintln!(
-                "listening on {}/sockets/denarius-worker.sock",
-                runtime_dir.display()
+            let mut table = host_env_vault::slot::SlotTable::new();
+            let options = host_env_vault::ServeOptions::new(
+                identity,
+                state_dir,
+                runtime_dir.clone(),
+                profile.clone(),
             );
-            host_env_vault::serve::serve_forever(
-                listener,
-                &state_dir,
-                &kek,
-                require_uid,
-                Duration::from_secs(poll_secs),
-            )?;
+            let (listener, catalog) = host_env_vault::bind_serve_socket(&options)?;
+            eprintln!(
+                "listening on {}/sockets/{}.sock",
+                runtime_dir.display(),
+                profile
+            );
+            host_env_vault::serve_profile_forever(listener, &kek, &mut table, catalog, &options)?;
         }
     }
     Ok(())

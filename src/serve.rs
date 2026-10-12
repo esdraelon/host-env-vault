@@ -1,141 +1,67 @@
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::bundle;
 use crate::error::Error;
-use crate::kek::AgeKek;
-use crate::profile::ProfileId;
+use crate::slot::NAME_MAX_BYTES;
 
-/// Runtime frames carry a 32-byte key, never a profile name and never an env
-/// secret. The socket path selects the profile. A longer body is rejected so
-/// this cannot become a general encryption oracle.
-pub const OP_WRAP: u8 = 1;
-pub const OP_UNWRAP: u8 = 2;
+/// Runtime frames name an entry on the profile's runtime list. The socket path
+/// selects the profile; the body is the entry name (UTF-8), not a secret value.
+pub const OP_FETCH_ENV: u8 = 1;
+pub const OP_FETCH_FILE: u8 = 2;
 pub const ST_OK: u8 = 0;
 pub const ST_DENIED: u8 = 1;
 
-const KEY_LEN: usize = 32;
-const NONCE_LEN: usize = 24;
-const TAG_LEN: usize = 16;
-const WRAPPED_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
-const MAX_BODY: usize = WRAPPED_LEN;
-const RUNTIME_AAD_PREFIX: &[u8] = b"hev-runtime-v1\0";
+const MAX_BODY: usize = NAME_MAX_BYTES;
 
 pub struct Response {
     pub status: u8,
     pub body: Zeroizing<Vec<u8>>,
 }
 
-/// Data keys for profiles that expose runtime wrap. Secret entries from the
-/// bundle are dropped before this returns.
-pub struct RuntimeKeys {
-    pub profile: ProfileId,
-    pub dek: Zeroizing<[u8; 32]>,
-}
-
-pub fn load_runtime_keys(state_dir: &Path, kek: &AgeKek) -> Result<Vec<RuntimeKeys>, Error> {
-    let mut loaded = Vec::new();
-    for profile in crate::profile::ALL {
-        if !profile.policy().runtime_key_wrap {
-            continue;
-        }
-        let path = state_dir.join(format!("{}.hev", profile.as_str()));
-        let bytes = std::fs::read(&path)?;
-        let opened = bundle::open(&bytes, kek)?;
-        if opened.profile != profile.as_str() {
-            return Err(Error::ProfileMismatch {
-                found: opened.profile,
-                expected: profile.as_str().to_owned(),
-            });
-        }
-        loaded.push(RuntimeKeys {
-            profile,
-            dek: opened.dek,
-        });
-    }
-    if loaded.is_empty() {
-        return Err(Error::NoRuntimeBundles(state_dir.to_path_buf()));
-    }
-    Ok(loaded)
-}
-
-pub fn dispatch(profile: ProfileId, dek: &[u8; 32], opcode: u8, body: &[u8]) -> Response {
-    let result = match opcode {
-        OP_WRAP if body.len() == KEY_LEN => wrap_key(profile, dek, body),
-        OP_UNWRAP if body.len() == WRAPPED_LEN => unwrap_key(profile, dek, body),
-        _ => Err(Error::RuntimeBody),
-    };
-    match result {
-        Ok(body) => Response {
-            status: ST_OK,
-            body: Zeroizing::new(body),
-        },
-        Err(_) => Response {
-            status: ST_DENIED,
-            body: Zeroizing::new(Vec::new()),
-        },
+pub fn dispatch_denied() -> Response {
+    Response {
+        status: ST_DENIED,
+        body: Zeroizing::new(Vec::new()),
     }
 }
 
-pub fn handle_connection(
+pub fn bind_runtime_socket(runtime_dir: &Path, profile_name: &str) -> Result<UnixListener, Error> {
+    let sockets = runtime_dir.join("sockets");
+    std::fs::create_dir_all(&sockets)?;
+    let path = sockets.join(format!("{profile_name}.sock"));
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    let listener = UnixListener::bind(&path)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
+}
+
+pub fn handle_connection_frames<F>(
     stream: &mut UnixStream,
-    profile: ProfileId,
-    dek: &[u8; 32],
-    require_uid: Option<u32>,
-) -> Result<(), Error> {
-    let uid = peer_uid(stream)?;
-    if let Some(expected) = require_uid {
-        if uid != expected {
-            write_response(stream, &dispatch_denied())?;
-            return Err(Error::PeerUid { actual: uid });
-        }
-    }
+    mut on_frame: F,
+) -> Result<(), Error>
+where
+    F: FnMut(u8, &[u8]) -> Result<Response, Error>,
+{
     loop {
         let mut frame = match read_frame(stream) {
             Ok(frame) => frame,
             Err(Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
             Err(err) => return Err(err),
         };
-        let response = dispatch(profile, dek, frame.opcode, &frame.body);
+        let response = on_frame(frame.opcode, &frame.body)?;
         frame.body.zeroize();
         write_response(stream, &response)?;
     }
 }
 
-pub fn serve_forever(
-    listener: UnixListener,
-    state_dir: &Path,
-    kek: &AgeKek,
-    require_uid: Option<u32>,
-    poll_every: std::time::Duration,
-) -> Result<(), Error> {
-    let profile = ProfileId::DenariusWorker;
-    let mut keys = load_runtime_keys(state_dir, kek)?;
-    loop {
-        if wait_for_socket(&listener, poll_every)? {
-            let (mut stream, _) = listener.accept()?;
-            let Some(keys) = keys.iter().find(|item| item.profile == profile) else {
-                return Err(Error::NoRuntimeBundles(state_dir.to_path_buf()));
-            };
-            if let Err(err) = handle_connection(&mut stream, profile, &keys.dek, require_uid) {
-                eprintln!("host-env-vault: {err}");
-            }
-        } else if let Err(err) = reload(&mut keys, state_dir, kek) {
-            eprintln!("host-env-vault: reload failed: {err}");
-        }
-    }
-}
-
-fn reload(keys: &mut Vec<RuntimeKeys>, state_dir: &Path, kek: &AgeKek) -> Result<(), Error> {
-    *keys = load_runtime_keys(state_dir, kek)?;
-    Ok(())
-}
-
-fn wait_for_socket(listener: &UnixListener, timeout: std::time::Duration) -> Result<bool, Error> {
+pub fn wait_for_socket(listener: &UnixListener, timeout: std::time::Duration) -> Result<bool, Error> {
     let mut fd = libc::pollfd {
         fd: listener.as_raw_fd(),
         events: libc::POLLIN,
@@ -151,26 +77,6 @@ fn wait_for_socket(listener: &UnixListener, timeout: std::time::Duration) -> Res
         return Err(Error::Io(err));
     }
     Ok(rc > 0 && (fd.revents & libc::POLLIN) != 0)
-}
-
-pub fn bind_runtime_socket(runtime_dir: &Path, profile: ProfileId) -> Result<UnixListener, Error> {
-    if !profile.policy().runtime_key_wrap {
-        return Err(Error::EntryNotAllowed {
-            name: profile.as_str().to_owned(),
-            kind: "socket",
-            profile: profile.as_str().to_owned(),
-        });
-    }
-    let sockets = runtime_dir.join("sockets");
-    std::fs::create_dir_all(&sockets)?;
-    let path = sockets.join(format!("{}.sock", profile.as_str()));
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-    }
-    let listener = UnixListener::bind(&path)?;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(listener)
 }
 
 struct Frame {
@@ -193,7 +99,7 @@ fn read_frame(stream: &mut UnixStream) -> Result<Frame, Error> {
     })
 }
 
-fn write_response(stream: &mut UnixStream, response: &Response) -> Result<(), Error> {
+pub fn write_response(stream: &mut UnixStream, response: &Response) -> Result<(), Error> {
     let len = u32::try_from(response.body.len()).expect("response fits");
     stream.write_all(&[response.status])?;
     stream.write_all(&len.to_le_bytes())?;
@@ -201,31 +107,7 @@ fn write_response(stream: &mut UnixStream, response: &Response) -> Result<(), Er
     Ok(())
 }
 
-fn dispatch_denied() -> Response {
-    Response {
-        status: ST_DENIED,
-        body: Zeroizing::new(Vec::new()),
-    }
-}
-
-fn runtime_aad(profile: ProfileId) -> Vec<u8> {
-    let mut aad = Vec::from(RUNTIME_AAD_PREFIX);
-    aad.extend_from_slice(profile.as_str().as_bytes());
-    aad
-}
-
-fn wrap_key(profile: ProfileId, dek: &[u8; 32], key: &[u8]) -> Result<Vec<u8>, Error> {
-    bundle::seal_key(dek, &runtime_aad(profile), key)
-}
-
-fn unwrap_key(profile: ProfileId, dek: &[u8; 32], wrapped: &[u8]) -> Result<Vec<u8>, Error> {
-    if wrapped.len() != WRAPPED_LEN {
-        return Err(Error::RuntimeBody);
-    }
-    bundle::open_key(dek, &runtime_aad(profile), wrapped)
-}
-
-fn peer_uid(stream: &UnixStream) -> Result<u32, Error> {
+pub fn peer_uid(stream: &UnixStream) -> Result<u32, Error> {
     let fd = stream.as_raw_fd();
     #[cfg(any(
         target_os = "macos",
@@ -272,7 +154,7 @@ pub fn exchange(stream: &mut UnixStream, opcode: u8, body: &[u8]) -> Result<Resp
     let mut header = [0u8; 5];
     stream.read_exact(&mut header)?;
     let resp_len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
-    if resp_len > MAX_BODY {
+    if resp_len > crate::slot::SECRET_MAX_BYTES {
         return Err(Error::RuntimeBody);
     }
     let mut resp = vec![0u8; resp_len];
@@ -286,166 +168,119 @@ pub fn exchange(stream: &mut UnixStream, opcode: u8, body: &[u8]) -> Result<Resp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::{self, random_array, Entry};
-    use crate::profile::Kind;
     use std::os::unix::net::UnixStream;
     use std::thread;
 
     #[test]
-    fn wrap_round_trip_is_bound_to_the_socket_profile() {
-        let dek = random_array::<32>().unwrap();
-        let other = random_array::<32>().unwrap();
-        let key = random_array::<32>().unwrap();
-        let wrapped = dispatch(ProfileId::DenariusWorker, &dek, OP_WRAP, &key);
-        assert_eq!(wrapped.status, ST_OK);
-        assert_eq!(wrapped.body.len(), WRAPPED_LEN);
-
-        let unwrapped = dispatch(ProfileId::DenariusWorker, &dek, OP_UNWRAP, &wrapped.body);
-        assert_eq!(unwrapped.status, ST_OK);
-        assert_eq!(&unwrapped.body[..], &key);
-
-        let wrong_dek = dispatch(ProfileId::DenariusWorker, &other, OP_UNWRAP, &wrapped.body);
-        assert_eq!(wrong_dek.status, ST_DENIED);
-
-        let named = dispatch(ProfileId::DenariusWorker, &dek, OP_UNWRAP, b"denarius-web");
-        assert_eq!(named.status, ST_DENIED);
-    }
-
-    #[test]
-    fn load_runtime_keys_ignores_a_corrupt_non_runtime_bundle() {
-        let kek = AgeKek::generate();
-        let dir = std::env::temp_dir().join(format!("hev-state-{}", std::process::id()));
+    fn bind_uses_profile_name_in_socket_path() {
+        let dir = PathBuf::from(format!("/tmp/hev-sock-name-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let worker = bundle::seal(
-            ProfileId::DenariusWorker,
-            vec![Entry {
-                name: "APP_KEY".to_owned(),
-                kind: Kind::Env,
-                bytes: Zeroizing::new(b"app-key-value".to_vec()),
-            }],
-            &kek,
-        )
-        .unwrap();
-        std::fs::write(dir.join("denarius-worker.hev"), &worker).unwrap();
-        std::fs::write(dir.join("denarius-web.hev"), b"not-a-bundle").unwrap();
-
-        let keys = load_runtime_keys(&dir, &kek).unwrap();
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].profile, ProfileId::DenariusWorker);
+        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
+        let path = listener
+            .local_addr()
+            .unwrap()
+            .as_pathname()
+            .expect("bound unix socket path")
+            .to_path_buf();
+        assert_eq!(
+            path,
+            dir.join("sockets").join("denarius-worker.sock")
+        );
+        drop(listener);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn socket_checks_peer_uid_and_wraps_a_key() {
-        let dir = std::env::temp_dir().join(format!(
-            "hev-sock-{}-{}",
-            std::process::id(),
-            random_array::<4>().unwrap()[0]
+    fn frame_round_trip_through_connection_handler() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            handle_connection_frames(&mut server, |opcode, body| {
+                let _ = opcode;
+                Ok(Response {
+                    status: ST_OK,
+                    body: Zeroizing::new(body.to_vec()),
+                })
+            })
+            .unwrap();
+        });
+        let response = exchange(&mut client, OP_FETCH_ENV, b"APP_KEY").unwrap();
+        assert_eq!(response.status, ST_OK);
+        assert_eq!(&response.body[..], b"APP_KEY");
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn read_frame_rejects_oversize_body() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(&[OP_FETCH_ENV]).unwrap();
+        client.write_all(&(MAX_BODY as u32 + 1).to_le_bytes()).unwrap();
+        drop(client);
+        assert!(matches!(
+            read_frame(&mut server),
+            Err(Error::RuntimeBody)
         ));
+    }
+
+    #[test]
+    fn handler_propagates_frame_callback_errors() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let client = thread::spawn(move || {
+            client.write_all(&[OP_FETCH_ENV, 1, 0, 0, 0, b'X']).unwrap();
+        });
+        let err =
+            handle_connection_frames(&mut server, |_, _| Err(Error::RuntimeBody)).unwrap_err();
+        assert!(matches!(err, Error::RuntimeBody));
+        client.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_socket_returns_true_when_peer_connects() {
+        let dir = PathBuf::from(format!("/tmp/hev-poll-in-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let listener = bind_runtime_socket(&dir, ProfileId::DenariusWorker).unwrap();
+        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
         let path = dir.join("sockets").join("denarius-worker.sock");
-        let dek = random_array::<32>().unwrap();
-        let uid = unsafe { libc::getuid() };
-
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            handle_connection(&mut stream, ProfileId::DenariusWorker, &dek, Some(uid)).unwrap();
+        let waiter = thread::spawn(move || {
+            wait_for_socket(&listener, std::time::Duration::from_secs(2)).unwrap()
         });
+        thread::sleep(std::time::Duration::from_millis(50));
+        let _ = UnixStream::connect(&path).unwrap();
+        assert!(waiter.join().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
-        let mut client = UnixStream::connect(&path).unwrap();
-        let key = random_array::<32>().unwrap();
-        let wrapped = exchange(&mut client, OP_WRAP, &key).unwrap();
-        assert_eq!(wrapped.status, ST_OK);
-        let unwrapped = exchange(&mut client, OP_UNWRAP, &wrapped.body).unwrap();
-        assert_eq!(unwrapped.status, ST_OK);
-        assert_eq!(&unwrapped.body[..], &key);
+    #[test]
+    fn handle_connection_frames_exits_cleanly_on_peer_close() {
+        let (mut server, client) = UnixStream::pair().unwrap();
         drop(client);
-        server.join().unwrap();
-
-        let listener = bind_runtime_socket(&dir, ProfileId::DenariusWorker).unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let err = handle_connection(
-                &mut stream,
-                ProfileId::DenariusWorker,
-                &random_array::<32>().unwrap(),
-                Some(u32::MAX),
-            )
-            .unwrap_err();
-            assert!(matches!(err, Error::PeerUid { .. }));
-        });
-        let mut client = UnixStream::connect(&path).unwrap();
-        let denied = exchange(&mut client, OP_WRAP, &key).unwrap();
-        assert_eq!(denied.status, ST_DENIED);
-        drop(client);
-        server.join().unwrap();
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn web_profile_has_no_socket() {
-        let dir = std::env::temp_dir().join(format!("hev-nosock-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).unwrap();
-        assert!(bind_runtime_socket(&dir, ProfileId::DenariusWeb).is_err());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn dispatch_rejects_bad_opcode_and_body_length() {
-        let dek = random_array::<32>().unwrap();
-        let denied = dispatch(ProfileId::DenariusWorker, &dek, 99, &[]);
-        assert_eq!(denied.status, ST_DENIED);
-        let short = dispatch(ProfileId::DenariusWorker, &dek, OP_WRAP, &[0u8; 8]);
-        assert_eq!(short.status, ST_DENIED);
-    }
-
-    #[test]
-    fn load_runtime_keys_errors_when_runtime_bundle_is_missing() {
-        let dir = std::env::temp_dir().join(format!("hev-empty-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).unwrap();
-        let kek = AgeKek::generate();
-        assert!(matches!(
-            load_runtime_keys(&dir, &kek),
-            Err(Error::Io(_))
-        ));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn load_runtime_keys_detects_profile_mismatch_in_bundle() {
-        let kek = AgeKek::generate();
-        let dir = std::env::temp_dir().join(format!("hev-mismatch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).unwrap();
-        let web = bundle::seal(
-            ProfileId::DenariusWeb,
-            vec![Entry {
-                name: "DB_PASS".to_owned(),
-                kind: Kind::Env,
-                bytes: Zeroizing::new(b"x".to_vec()),
-            }],
-            &kek,
-        )
+        handle_connection_frames(&mut server, |_, _| {
+            Ok(Response {
+                status: ST_OK,
+                body: Zeroizing::new(Vec::new()),
+            })
+        })
         .unwrap();
-        std::fs::write(dir.join("denarius-worker.hev"), &web).unwrap();
-        assert!(matches!(
-            load_runtime_keys(&dir, &kek),
-            Err(Error::ProfileMismatch { .. })
-        ));
-        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn read_frame_accepts_max_length_body() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let body = vec![b'z'; MAX_BODY];
+        client.write_all(&[OP_FETCH_ENV]).unwrap();
+        client.write_all(&(MAX_BODY as u32).to_le_bytes()).unwrap();
+        client.write_all(&body).unwrap();
+        let frame = read_frame(&mut server).unwrap();
+        assert_eq!(frame.body.len(), MAX_BODY);
     }
 
     #[test]
     fn wait_for_socket_times_out_without_connection() {
-        let dir = std::env::temp_dir().join(format!("hev-poll-{}", std::process::id()));
+        let dir = PathBuf::from(format!("/tmp/hev-poll-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let listener = bind_runtime_socket(&dir, ProfileId::DenariusWorker).unwrap();
+        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
         assert!(!wait_for_socket(&listener, std::time::Duration::from_millis(10)).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }

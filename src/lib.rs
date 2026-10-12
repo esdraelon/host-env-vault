@@ -1,9 +1,8 @@
 //! Host profile vault for Denarius and the Amtgard IDP.
 //!
 //! A profile is a process personality. `render` writes that profile's files to
-//! an empty directory. `serve` holds the data key only for profiles marked
-//! `runtime_key_wrap`, and the unix socket path is the profile name. Frames
-//! carry 32-byte keys. They cannot name another profile or fetch an env secret.
+//! an empty directory. `serve` exposes runtime-listed entries on a per-profile
+//! unix socket; the path is the profile name and each frame names one entry.
 
 #[cfg(not(unix))]
 compile_error!("host-env-vault is a unix host agent");
@@ -18,6 +17,7 @@ pub mod profile;
 pub mod render;
 pub mod render_cmd;
 pub mod serve;
+pub mod serve_cmd;
 pub mod slot;
 pub mod sync;
 
@@ -36,7 +36,9 @@ pub use render::{read_staging, render, RenderMode};
 pub use render_cmd::{
     render_from_vault, render_profile_with_catalog, RenderOptions, RENDER_SLOT_INDEX,
 };
-pub use serve::{dispatch, load_runtime_keys, RuntimeKeys};
+pub use serve_cmd::{
+    bind_serve_socket, fetch_runtime_entry, serve_profile_forever, ServeOptions, SERVE_SLOT_INDEX,
+};
 pub use sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter, sync_from_ssm, SyncOptions,
     DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,

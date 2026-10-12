@@ -479,6 +479,15 @@ mod tests {
     }
 
     #[test]
+    fn runtime_key_wrap_round_trip() {
+        let dek = random_array::<32>().unwrap();
+        let key = random_array::<32>().unwrap();
+        let wrapped = seal_key(&dek, b"aad", &key).unwrap();
+        let opened = open_key(&dek, b"aad", &wrapped).unwrap();
+        assert_eq!(&opened[..], &key);
+    }
+
+    #[test]
     fn open_key_rejects_short_wrapped_blob() {
         let dek = random_array::<32>().unwrap();
         assert!(matches!(

@@ -321,6 +321,10 @@ impl Slot {
         self.in_use
     }
 
+    pub fn verify_lease(&self, lease: SlotLease) -> Result<(), SlotError> {
+        self.check_generation(lease)
+    }
+
     pub fn profile_name_bytes(&self) -> &[u8] {
         &self.profile_name[..self.profile_name_len as usize]
     }
