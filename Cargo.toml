@@ -3,7 +3,7 @@ name = "host-env-vault"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Spike of the host profile vault for Denarius and the Amtgard IDP"
+description = "Unix host agent: sync secrets, seal local bundles, render and serve per catalog profile"
 
 [dependencies]
 age = "0.12.1"

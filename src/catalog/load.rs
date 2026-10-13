@@ -55,7 +55,7 @@ mod tests {
 
     const SAMPLE: &str = r#"{
       "profiles": [{
-        "name": "denarius-web",
+        "name": "app-web",
         "inject": ["DB_PASS"],
         "runtime": [],
         "socket": false
@@ -67,13 +67,13 @@ mod tests {
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, SAMPLE);
         let catalog = load_default_catalog(&ssm).unwrap();
-        assert!(catalog.profile("denarius-web").is_some());
+        assert!(catalog.profile("app-web").is_some());
         let catalog = load_catalog_from_ssm(&ssm, DEFAULT_CATALOG_PARAMETER).unwrap();
         let mut table = SlotTable::new();
         let lease = table.try_acquire(0, Instant::now()).unwrap();
         let slot = table.slot_ref_mut(0).unwrap();
-        let def = bind_catalog_profile(&catalog, "denarius-web", slot, lease).unwrap();
-        assert_eq!(def.name, "denarius-web");
-        assert_eq!(slot.profile_name_bytes(), b"denarius-web");
+        let def = bind_catalog_profile(&catalog, "app-web", slot, lease).unwrap();
+        assert_eq!(def.name, "app-web");
+        assert_eq!(slot.profile_name_bytes(), b"app-web");
     }
 }

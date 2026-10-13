@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 
 const WEB_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-web",
+    "name": "app-web",
     "inject": ["DB_PASS"],
     "runtime": []
   }]
@@ -24,8 +24,8 @@ const WEB_CATALOG: &str = r#"{
 
 const TWO_PROFILE_CATALOG: &str = r#"{
   "profiles": [
-    {"name": "denarius-web", "inject": ["DB_PASS"], "runtime": []},
-    {"name": "denarius-connect", "inject": ["STRIPE_SECRET_KEY"], "runtime": []}
+    {"name": "app-web", "inject": ["DB_PASS"], "runtime": []},
+    {"name": "edge-proxy", "inject": ["STRIPE_SECRET_KEY"], "runtime": []}
   ]
 }"#;
 
@@ -38,13 +38,13 @@ fn temp_state_dir(label: &str) -> PathBuf {
 
 fn seed_web_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "db-secret-value");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "db-secret-value");
 }
 
 fn seed_two_profile_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, TWO_PROFILE_CATALOG);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "web-db");
-    ssm.put("/host-env-vault/denarius-connect/STRIPE_SECRET_KEY", "sk_live");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "web-db");
+    ssm.put("/host-env-vault/edge-proxy/STRIPE_SECRET_KEY", "sk_live");
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
-    assert!(work.join("denarius-web.hev").is_file());
+    assert!(work.join("app-web.hev").is_file());
     std::env::set_current_dir(previous).unwrap();
     let _ = std::fs::remove_dir_all(&work);
 }
@@ -87,10 +87,10 @@ fn sync_success_replaces_bundle_on_disk() {
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
-    let path = bundle_path(&state_dir, "denarius-web");
+    let path = bundle_path(&state_dir, "app-web");
     let bytes = std::fs::read(&path).unwrap();
     let opened = open_bytes(&bytes, &kek).unwrap();
-    assert_eq!(opened.profile, "denarius-web");
+    assert_eq!(opened.profile, "app-web");
     assert_eq!(opened.entries.len(), 1);
     assert_eq!(opened.entries[0].name, "DB_PASS");
     assert_eq!(&*opened.entries[0].bytes, b"db-secret-value");
@@ -110,7 +110,7 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let kek = AgeKek::generate();
     let stale = seal_bytes(
-        "denarius-web",
+        "app-web",
         vec![Entry {
             name: "DB_PASS".into(),
             kind: Kind::Env,
@@ -119,7 +119,7 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
         &kek,
     )
     .unwrap();
-    let bundle_file = bundle_path(&state_dir, "denarius-web");
+    let bundle_file = bundle_path(&state_dir, "app-web");
     std::fs::write(&bundle_file, &stale).unwrap();
 
     let ssm = MemorySsm::new();
@@ -148,7 +148,7 @@ fn pull_from_ssm_does_not_occupy_sync_slot() {
     let ssm = MemorySsm::new();
     seed_web_ssm(&ssm);
     let catalog = parse_catalog_text(WEB_CATALOG).unwrap();
-    let definition = catalog.profile("denarius-web").unwrap();
+    let definition = catalog.profile("app-web").unwrap();
     let table = SlotTable::new();
     let secrets = SsmSecretSource::new(
         DEFAULT_CATALOG_PARAMETER,
@@ -223,7 +223,7 @@ fn missing_catalog_parameter_fails_without_writing_bundles() {
         sync_from_ssm(&ssm, &kek, &mut table, &options),
         Err(Error::SsmMissing(_))
     ));
-    assert!(!bundle_path(&state_dir, "denarius-web").exists());
+    assert!(!bundle_path(&state_dir, "app-web").exists());
     let _ = std::fs::remove_dir_all(&state_dir);
 }
 
@@ -264,11 +264,11 @@ fn sync_catalog_from_text_matches_ssm_catalog_path() {
     let state_dir = temp_state_dir("from-text");
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "from-text");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "from-text");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_catalog_from_text(WEB_CATALOG, DEFAULT_SECRETS_PREFIX, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
-    let bytes = std::fs::read(bundle_path(&state_dir, "denarius-web")).unwrap();
+    let bytes = std::fs::read(bundle_path(&state_dir, "app-web")).unwrap();
     let opened = open_bytes(&bytes, &kek).unwrap();
     assert_eq!(&*opened.entries[0].bytes, b"from-text");
     let _ = std::fs::remove_dir_all(&state_dir);
@@ -281,7 +281,7 @@ fn max_length_ssm_value_is_accepted() {
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
     let value = "x".repeat(SECRET_MAX_BYTES);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", value.clone());
+    ssm.put("/host-env-vault/app-web/DB_PASS", value.clone());
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
@@ -293,7 +293,7 @@ fn max_length_ssm_value_is_accepted() {
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     let opened = open_bytes(
-        &std::fs::read(bundle_path(&state_dir, "denarius-web")).unwrap(),
+        &std::fs::read(bundle_path(&state_dir, "app-web")).unwrap(),
         &kek,
     )
     .unwrap();
@@ -303,7 +303,7 @@ fn max_length_ssm_value_is_accepted() {
 
 const FILE_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": [],
     "runtime": [],
     "runtime_files": ["teller.key"]
@@ -316,7 +316,7 @@ fn file_entries_skip_env_line_validation() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, FILE_CATALOG);
-    ssm.put("/host-env-vault/denarius-worker/teller.key", "line-one\nline-two");
+    ssm.put("/host-env-vault/app-worker/teller.key", "line-one\nline-two");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
@@ -335,7 +335,7 @@ fn sync_catalog_from_text_counts_profile_failures() {
     let state_dir = temp_state_dir("text-partial");
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "ok");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "ok");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     assert!(matches!(
@@ -351,8 +351,8 @@ fn sync_catalog_from_text_counts_profile_failures() {
         ),
         Err(Error::SyncFailed { count: 1 })
     ));
-    assert!(bundle_path(&state_dir, "denarius-web").exists());
-    assert!(!bundle_path(&state_dir, "denarius-connect").exists());
+    assert!(bundle_path(&state_dir, "app-web").exists());
+    assert!(!bundle_path(&state_dir, "edge-proxy").exists());
     let _ = std::fs::remove_dir_all(&state_dir);
 }
 
@@ -362,7 +362,7 @@ fn invalid_env_value_from_ssm_is_rejected() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "bad\nline");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "bad\nline");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
@@ -432,6 +432,6 @@ fn atomic_replace_does_not_leave_tmp_when_rename_succeeds() {
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
-    assert!(!state_dir.join("denarius-web.hev.tmp").exists());
+    assert!(!state_dir.join("app-web.hev.tmp").exists());
     let _ = std::fs::remove_dir_all(&state_dir);
 }

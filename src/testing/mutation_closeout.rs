@@ -62,7 +62,7 @@ mod tests {
         std::fs::create_dir_all(&state_dir).unwrap();
         let kek = AgeKek::generate();
         let stale = seal_bytes(
-            "denarius-web",
+            "app-web",
             vec![Entry {
                 name: "DB_PASS".into(),
                 kind: Kind::Env,
@@ -71,13 +71,13 @@ mod tests {
             &kek,
         )
         .unwrap();
-        let bundle_file = bundle_path(&state_dir, "denarius-web");
+        let bundle_file = bundle_path(&state_dir, "app-web");
         std::fs::write(&bundle_file, &stale).unwrap();
 
         let ssm = MemorySsm::new();
         ssm.put(
             DEFAULT_CATALOG_PARAMETER,
-            r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#,
+            r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
         );
 
         let mut table = SlotTable::new();

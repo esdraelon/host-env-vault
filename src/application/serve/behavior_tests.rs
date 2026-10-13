@@ -19,7 +19,7 @@ use crate::vault::kek::AgeKek;
 
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
     "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
     "inject_files": [],
@@ -38,11 +38,11 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn seed_worker_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER_CATALOG);
-    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
-    ssm.put("/host-env-vault/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
-    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "app-key-runtime");
-    ssm.put("/host-env-vault/denarius-worker/STRIPE_SECRET_KEY", "sk-runtime");
-    ssm.put("/host-env-vault/denarius-worker/teller.key", "teller-bytes");
+    ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/app-worker/STRIPE_WEBHOOK_SECRET", "whsec");
+    ssm.put("/host-env-vault/app-worker/APP_KEY", "app-key-runtime");
+    ssm.put("/host-env-vault/app-worker/STRIPE_SECRET_KEY", "sk-runtime");
+    ssm.put("/host-env-vault/app-worker/teller.key", "teller-bytes");
 }
 
 fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
@@ -88,7 +88,7 @@ fn serve_returns_runtime_entry_from_local_bundle_without_ssm() {
         &kek,
         &mut table,
         &catalog,
-        "denarius-worker",
+        "app-worker",
         &state_dir,
         Kind::Env,
         "APP_KEY",
@@ -111,14 +111,14 @@ fn serve_refuses_bundle_profile_mismatch() {
     let (kek, state_dir) = sync_worker_vault(&root);
     let extended_catalog = r#"{
   "profiles": [
-    {"name":"denarius-web","inject":["DB_PASS"],"runtime":[]},
-    {"name":"denarius-worker","inject":["DB_PASS","STRIPE_WEBHOOK_SECRET"],"runtime":["APP_KEY","STRIPE_SECRET_KEY"],"inject_files":[],"runtime_files":["teller.key"],"socket":true,"require_uid":33}
+    {"name":"app-web","inject":["DB_PASS"],"runtime":[]},
+    {"name":"app-worker","inject":["DB_PASS","STRIPE_WEBHOOK_SECRET"],"runtime":["APP_KEY","STRIPE_SECRET_KEY"],"inject_files":[],"runtime_files":["teller.key"],"socket":true,"require_uid":33}
   ]
 }"#;
     fs::write(state_dir.join("catalog.json"), extended_catalog.as_bytes()).unwrap();
     let catalog = crate::catalog::load_catalog_snapshot(&state_dir).unwrap();
     let bundle = crate::vault::bundle::seal_bytes(
-        "denarius-web",
+        "app-web",
         vec![crate::vault::bundle::Entry {
             name: "DB_PASS".into(),
             kind: Kind::Env,
@@ -128,7 +128,7 @@ fn serve_refuses_bundle_profile_mismatch() {
     )
     .unwrap();
     fs::write(
-        crate::application::sync::bundle_path(&state_dir, "denarius-worker"),
+        crate::application::sync::bundle_path(&state_dir, "app-worker"),
         bundle,
     )
     .unwrap();
@@ -138,7 +138,7 @@ fn serve_refuses_bundle_profile_mismatch() {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &state_dir,
             Kind::Env,
             "APP_KEY",
@@ -161,7 +161,7 @@ fn serve_denies_inject_only_entry_on_worker_socket() {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &state_dir,
             Kind::Env,
             "DB_PASS",
@@ -193,7 +193,7 @@ fn serve_denies_peer_uid_mismatch_on_socket() {
         root.join("kek.age"),
         state_dir,
         root.join("run"),
-        "denarius-worker",
+        "app-worker",
     );
     let mut table = SlotTable::new();
     let (mut server, mut client) = UnixStream::pair().unwrap();
@@ -223,13 +223,13 @@ fn serve_accepts_matching_peer_uid_and_returns_runtime_secret() {
     catalog_text = catalog_text.replace("\"require_uid\": 33", &format!("\"require_uid\": {uid}"));
     fs::write(state_dir.join("catalog.json"), catalog_text.as_bytes()).unwrap();
     let catalog = crate::catalog::load_catalog_snapshot(&state_dir).unwrap();
-    let listener = bind_runtime_socket(&runtime_dir, "denarius-worker").unwrap();
-    let path = runtime_dir.join("sockets").join("denarius-worker.sock");
+    let listener = bind_runtime_socket(&runtime_dir, "app-worker").unwrap();
+    let path = runtime_dir.join("sockets").join("app-worker.sock");
     let options = ServeOptions::new(
         root.join("kek.age"),
         state_dir,
         runtime_dir,
-        "denarius-worker",
+        "app-worker",
     );
     let mut table = SlotTable::new();
 
@@ -259,7 +259,7 @@ fn lease_sweep_wipes_serve_slot_before_late_read() {
         &kek,
         &mut table,
         &catalog,
-        "denarius-worker",
+        "app-worker",
         &state_dir,
     )
     .unwrap();

@@ -384,7 +384,7 @@ mod tests {
         )
         .unwrap();
         let opened = open(&bundle, &kek).unwrap();
-        assert_eq!(opened.profile, "denarius-web");
+        assert_eq!(opened.profile, "app-web");
         assert_eq!(opened.entries.len(), 2);
         assert_eq!(opened.entries[0].name, "DB_PASS");
         assert_eq!(&opened.entries[0].bytes[..], b"db-secret");
@@ -426,8 +426,8 @@ mod tests {
         )
         .unwrap();
         let mut relabeled = bundle.clone();
-        let web = b"denarius-web";
-        let worker = b"denarius-wor";
+        let web = b"app-web";
+        let worker = b"app-wxx";
         let at = relabeled
             .windows(web.len())
             .position(|window| window == web)
@@ -517,7 +517,7 @@ mod tests {
             bytes: Zeroizing::new(vec![]),
         };
         assert!(matches!(
-            seal_bytes("denarius-web", vec![empty_file], &kek),
+            seal_bytes("app-web", vec![empty_file], &kek),
             Err(Error::InvalidEnvValue(_))
         ));
         let huge = Entry {
@@ -526,7 +526,7 @@ mod tests {
             bytes: Zeroizing::new(vec![b'x'; MAX_FILE_LEN + 1]),
         };
         assert!(matches!(
-            seal_bytes("denarius-web", vec![huge], &kek),
+            seal_bytes("app-web", vec![huge], &kek),
             Err(Error::InvalidEnvValue(_))
         ));
     }
@@ -538,14 +538,14 @@ mod tests {
             .map(|i| env(&format!("E{i:02}"), "v"))
             .collect();
         assert!(matches!(
-            seal_bytes("denarius-web", entries, &kek),
+            seal_bytes("app-web", entries, &kek),
             Err(Error::RuntimeBody)
         ));
     }
 
     #[test]
     fn decode_payload_rejects_bad_counts_and_trailing_bytes() {
-        let profile = "denarius-web";
+        let profile = "app-web";
         let mut header = vec![profile.len() as u8];
         header.extend_from_slice(profile.as_bytes());
         header.extend_from_slice(&0u16.to_le_bytes());
@@ -579,9 +579,9 @@ mod tests {
 
     #[test]
     fn decode_payload_rejects_wrong_embedded_profile_name() {
-        let expected = "denarius-web";
-        let mut payload = vec![15u8];
-        payload.extend_from_slice(b"denarius-worker");
+        let expected = "app-web";
+        let mut payload = vec![b"app-worker".len() as u8];
+        payload.extend_from_slice(b"app-worker");
         payload.extend_from_slice(&0u16.to_le_bytes());
         assert!(matches!(
             decode_payload(expected, &payload),

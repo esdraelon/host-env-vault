@@ -54,7 +54,7 @@ mod tests {
     use crate::catalog::DEFAULT_CATALOG_PARAMETER;
 
     const SAMPLE: &str =
-        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
 
     fn temp_dir(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -73,7 +73,7 @@ mod tests {
         write_catalog_snapshot(&dir, SAMPLE).unwrap();
         assert_eq!(catalog_snapshot_path(&dir), dir.join(CATALOG_SNAPSHOT_FILE));
         let catalog = load_catalog_snapshot(&dir).unwrap();
-        assert!(catalog.profile("denarius-web").is_some());
+        assert!(catalog.profile("app-web").is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

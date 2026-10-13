@@ -15,7 +15,7 @@ use crate::vault::kek::AgeKek;
 
 const WORKER: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": ["DB_PASS"],
     "runtime": ["APP_KEY"],
     "socket": true,
@@ -40,8 +40,8 @@ fn log_serve_deny_runtime_entry_and_return_success() {
     fs::create_dir(&state_dir).unwrap();
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
-    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "key");
+    ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/app-worker/APP_KEY", "key");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_from_ssm(
@@ -65,7 +65,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             &kek,
             &mut t,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &state_dir,
             Kind::Env,
             "DB_PASS",
@@ -82,7 +82,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             &kek,
             &mut t,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &state_dir,
             Kind::Env,
             "APP_KEY",
@@ -98,7 +98,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
 #[serial]
 #[test]
 fn log_serve_refuse_profile_without_socket() {
-    let catalog_text = r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#;
+    let catalog_text = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#;
     let _catalog = parse_catalog_text(catalog_text).unwrap();
     let root = temp_dir("nosock");
     let _ = fs::remove_dir_all(&root);
@@ -109,7 +109,7 @@ fn log_serve_refuse_profile_without_socket() {
         root.join("kek.age"),
         root.clone(),
         root.join("run"),
-        "denarius-web",
+        "app-web",
     );
     let text = capture_info_logs(|| {
         assert!(matches!(
@@ -141,7 +141,7 @@ fn log_serve_deny_peer_uid() {
         root.join("kek.age"),
         state_dir,
         root.join("run"),
-        "denarius-worker",
+        "app-worker",
     );
     let mut table = SlotTable::new();
     let (mut server, client) = UnixStream::pair().unwrap();

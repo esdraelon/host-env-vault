@@ -239,7 +239,7 @@ mod unit_tests {
         assert!(is_secret_shaped_s3_key("teller.key"));
         assert!(is_secret_shaped_s3_key("nginx/oauth-private.key"));
         assert!(!is_secret_shaped_s3_key("nginx/amtgard.conf"));
-        assert!(!is_secret_shaped_s3_key("denarius.env"));
+        assert!(!is_secret_shaped_s3_key("app.env"));
         assert!(is_secret_shaped_s3_key("backup_api_key.env"));
         assert!(is_secret_shaped_s3_key("tls.pem"));
         assert!(is_secret_shaped_s3_key("signing.p8"));

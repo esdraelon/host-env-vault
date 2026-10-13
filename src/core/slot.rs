@@ -546,7 +546,7 @@ mod behavior_tests {
         let (mut table, lease, _) = lease_at(0);
         {
             let slot = table.slot_ref_mut(0).unwrap();
-            slot.set_profile_name(lease, b"denarius-web").unwrap();
+            slot.set_profile_name(lease, b"app-web").unwrap();
             slot.put_secret(lease, b"DB_PASS", b"secret-value").unwrap();
             let arr = slot.secret_data_array(0).unwrap();
             assert!(arr[512..].iter().all(|b| *b == 0));
@@ -687,8 +687,8 @@ mod behavior_tests {
         assert_eq!(table.slot_ref(0).unwrap().generation(), 0);
         let (mut table, lease, _) = lease_at(1);
         let slot = table.slot_ref_mut(1).unwrap();
-        slot.set_profile_name(lease, b"denarius-web").unwrap();
-        assert_eq!(slot.profile_name_bytes(), b"denarius-web");
+        slot.set_profile_name(lease, b"app-web").unwrap();
+        assert_eq!(slot.profile_name_bytes(), b"app-web");
     }
 
     #[test]

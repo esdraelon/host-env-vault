@@ -10,7 +10,7 @@ use serial_test::serial;
 use std::time::Instant;
 use zeroize::Zeroizing;
 
-const WEB: &str = r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+const WEB: &str = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
 
 #[serial]
 #[test]
@@ -26,7 +26,7 @@ fn log_local_bundle_seal_from_slot() {
             kind: Kind::Env,
             bytes: b"x",
         }];
-        let _ = seal_profile_in_slot(&catalog, slot, lease, "denarius-web", &entries, &kek);
+        let _ = seal_profile_in_slot(&catalog, slot, lease, "app-web", &entries, &kek);
     });
     assert!(text.contains("local bundle seal from slot"), "logs: {text}");
 }
@@ -37,7 +37,7 @@ fn log_local_bundle_open_into_slot() {
     let catalog = parse_catalog_text(WEB).unwrap();
     let kek = AgeKek::generate();
     let bundle = seal_bytes(
-        "denarius-web",
+        "app-web",
         vec![Entry {
             name: "DB_PASS".into(),
             kind: Kind::Env,
@@ -88,7 +88,7 @@ fn log_local_bundle_refuse_open_entry() {
     let catalog = parse_catalog_text(WEB).unwrap();
     let kek = AgeKek::generate();
     let bundle = seal_bytes(
-        "denarius-web",
+        "app-web",
         vec![Entry {
             name: "APP_KEY".into(),
             kind: Kind::Env,

@@ -16,7 +16,7 @@ fn log_catalog_parse_failure() {
 #[test]
 fn log_catalog_refuse_seal_entry() {
     let catalog = parse_catalog_text(
-        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#,
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
     )
     .unwrap();
     let text = capture_info_logs(|| {
@@ -25,7 +25,7 @@ fn log_catalog_refuse_seal_entry() {
             kind: Kind::Env,
             bytes: b"k",
         }];
-        let _ = validate_seal_entries(&catalog, "denarius-web", &entries);
+        let _ = validate_seal_entries(&catalog, "app-web", &entries);
     });
     assert!(text.contains("catalog refuse seal entry"), "logs: {text}");
 }
@@ -34,11 +34,11 @@ fn log_catalog_refuse_seal_entry() {
 #[test]
 fn log_catalog_refuse_serve_on_non_socket_profile() {
     let catalog = parse_catalog_text(
-        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#,
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#,
     )
     .unwrap();
     let text = capture_info_logs(|| {
-        let _ = validate_serve_entry(&catalog, "denarius-web", Kind::Env, "DB_PASS");
+        let _ = validate_serve_entry(&catalog, "app-web", Kind::Env, "DB_PASS");
     });
     assert!(
         text.contains("catalog refuse serve on non-socket profile"),
@@ -51,13 +51,13 @@ fn log_catalog_refuse_serve_on_non_socket_profile() {
 fn log_catalog_refuse_serve_entry() {
     let catalog = parse_catalog_text(WORKER).unwrap();
     let text = capture_info_logs(|| {
-        let _ = validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "DB_PASS");
+        let _ = validate_serve_entry(&catalog, "app-worker", Kind::Env, "DB_PASS");
     });
     assert!(text.contains("catalog refuse serve entry"), "logs: {text}");
 }
 
 const WORKER: &str = r#"{"profiles":[{
-  "name":"denarius-worker",
+  "name":"app-worker",
   "inject":["DB_PASS"],
   "runtime":["APP_KEY"],
   "socket":true,

@@ -364,7 +364,7 @@ mod unit_tests {
 
     const WORKER: &str = r#"{
       "profiles": [{
-        "name": "denarius-worker",
+        "name": "app-worker",
         "inject": ["DB_PASS"],
         "runtime": ["APP_KEY"],
         "runtime_files": ["teller.key"],
@@ -400,7 +400,7 @@ mod unit_tests {
             root.join("k.age"),
             root.clone(),
             root.join("run"),
-            "denarius-worker",
+            "app-worker",
         );
         let (listener, _) = bind_serve_socket(&options).unwrap();
         drop(listener);
@@ -411,7 +411,7 @@ mod unit_tests {
         assert!(!table.slot_ref(SERVE_SLOT_INDEX).unwrap().in_use());
         let _ = lease;
         let catalog = tick_serve_idle(&mut table, &root).unwrap();
-        assert!(catalog.profile("denarius-worker").unwrap().socket);
+        assert!(catalog.profile("app-worker").unwrap().socket);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -422,9 +422,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
-        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/denarius-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/app-worker/teller.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -446,7 +446,7 @@ mod unit_tests {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &root,
             crate::legacy::serve::OP_FETCH_FILE,
             b"teller.key",
@@ -466,7 +466,7 @@ mod unit_tests {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             Path::new("/tmp"),
             OP_FETCH_ENV,
             &long,
@@ -481,9 +481,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
-        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/denarius-worker/teller.key", "f");
+        ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/app-worker/teller.key", "f");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -505,7 +505,7 @@ mod unit_tests {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &root,
             99,
             b"APP_KEY",
@@ -515,7 +515,7 @@ mod unit_tests {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &root,
             OP_FETCH_ENV,
             b"",
@@ -552,8 +552,8 @@ mod unit_tests {
         ];
         let slot = table.slot_ref_mut(0).unwrap();
         let bytes =
-            seal_profile_in_slot(&catalog, slot, lease, "denarius-worker", &entries, &kek).unwrap();
-        std::fs::write(bundle_path(&root, "denarius-worker"), &bytes).unwrap();
+            seal_profile_in_slot(&catalog, slot, lease, "app-worker", &entries, &kek).unwrap();
+        std::fs::write(bundle_path(&root, "app-worker"), &bytes).unwrap();
         write_catalog_snapshot(&root, WORKER).unwrap();
         table.release(lease).unwrap();
         let mut serve_table = SlotTable::new();
@@ -561,7 +561,7 @@ mod unit_tests {
             &kek,
             &mut serve_table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &root,
             Kind::File,
             "teller.key",
@@ -578,7 +578,7 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         write_catalog_snapshot(
             &root,
-            r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#,
+            r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#,
         )
         .unwrap();
         let options = ServeOptions::new(root.join("k"), root.clone(), root.join("run"), "missing");
@@ -587,7 +587,7 @@ mod unit_tests {
             root.join("k"),
             root.clone(),
             root.join("run"),
-            "denarius-web",
+            "app-web",
         );
         assert!(bind_serve_socket(&options).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -598,7 +598,7 @@ mod unit_tests {
         let opts = ServeOptions::with_default_state_dir(
             PathBuf::from("/etc/host-env-vault/kek.age"),
             PathBuf::from("/run/host-env-vault"),
-            "denarius-worker",
+            "app-worker",
         );
         assert_eq!(opts.state_dir, PathBuf::from(DEFAULT_STATE_DIR));
     }
@@ -613,9 +613,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
-        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/denarius-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/app-worker/teller.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -639,13 +639,13 @@ mod unit_tests {
             root.join("k.age"),
             root.clone(),
             root.join("run"),
-            "denarius-worker",
+            "app-worker",
         );
         let (listener, catalog) = bind_serve_socket(&options).unwrap();
         let path = root
             .join("run")
             .join("sockets")
-            .join("denarius-worker.sock");
+            .join("app-worker.sock");
         let server = thread::spawn(move || {
             poll_serve_once(&listener, &kek, &mut SlotTable::new(), catalog, &options).unwrap();
         });
@@ -668,7 +668,7 @@ mod unit_tests {
             root.join("k.age"),
             root.clone(),
             root.join("run"),
-            "denarius-worker",
+            "app-worker",
         );
         let (listener, catalog) = bind_serve_socket(&options).unwrap();
         let kek = AgeKek::generate();
@@ -693,8 +693,8 @@ mod unit_tests {
         }];
         let slot = table.slot_ref_mut(0).unwrap();
         let bytes =
-            seal_profile_in_slot(&catalog, slot, lease, "denarius-worker", &entries, &kek).unwrap();
-        std::fs::write(bundle_path(&root, "denarius-worker"), &bytes).unwrap();
+            seal_profile_in_slot(&catalog, slot, lease, "app-worker", &entries, &kek).unwrap();
+        std::fs::write(bundle_path(&root, "app-worker"), &bytes).unwrap();
         write_catalog_snapshot(&root, WORKER).unwrap();
         table.release(lease).unwrap();
         let mut serve_table = SlotTable::new();
@@ -703,7 +703,7 @@ mod unit_tests {
                 &kek,
                 &mut serve_table,
                 &catalog,
-                "denarius-worker",
+                "app-worker",
                 &root,
                 Kind::Env,
                 "APP_KEY",
@@ -715,7 +715,7 @@ mod unit_tests {
                 &kek,
                 &mut serve_table,
                 &catalog,
-                "denarius-worker",
+                "app-worker",
                 &root,
                 Kind::Env,
                 "teller.key",
@@ -738,7 +738,7 @@ mod unit_tests {
             &kek,
             &mut table,
             &catalog,
-            "denarius-worker",
+            "app-worker",
             &root,
             OP_FETCH_ENV,
             b"APP_KEY",

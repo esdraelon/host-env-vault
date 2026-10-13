@@ -40,12 +40,12 @@ fn log_reject_secret_shaped_s3_key() {
 #[test]
 fn log_loaded_s3_object() {
     let catalog = parse_catalog_text(
-        r#"{"profiles":[{"name":"nginx","inject":[],"runtime":[],"documents":["denarius.env"]}]}"#,
+        r#"{"profiles":[{"name":"nginx","inject":[],"runtime":[],"documents":["app.env"]}]}"#,
     )
     .unwrap();
     let nginx = catalog.profile("nginx").unwrap();
     let s3 = MemoryS3::new();
-    s3.put("denarius.env", b"APP_ENV=prod\n");
+    s3.put("app.env", b"APP_ENV=prod\n");
     let joined = capture_info_logs(|| {
         pull_profile_documents(&s3, "", nginx).unwrap();
     });

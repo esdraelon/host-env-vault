@@ -297,7 +297,7 @@ mod tests {
     fn json_catalog_parses_worker_runtime_socket() {
         let text = r#"{
           "profiles": [{
-            "name": "denarius-worker",
+            "name": "app-worker",
             "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
             "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
             "inject_files": [],
@@ -309,7 +309,7 @@ mod tests {
           }]
         }"#;
         let catalog = parse_catalog_text(text).unwrap();
-        let worker = catalog.profile("denarius-worker").unwrap();
+        let worker = catalog.profile("app-worker").unwrap();
         assert!(worker.socket);
         assert_eq!(worker.require_uid, Some(33));
         assert!(worker.allows_seal(Kind::Env, "DB_PASS"));
@@ -327,13 +327,13 @@ mod tests {
 [[profiles]]
 name = "github"
 inject = []
-runtime = ["esdraelon", "megiddo"]
+runtime = ["gh-user-alpha", "gh-user-beta"]
 socket = false
-github_active_user = "esdraelon"
+github_active_user = "gh-user-alpha"
 "#;
         let catalog = parse_catalog_text(text).unwrap();
         let gh = catalog.profile("github").unwrap();
-        assert_eq!(gh.github_active_user.as_deref(), Some("esdraelon"));
-        assert!(gh.allows_seal(Kind::Env, "esdraelon"));
+        assert_eq!(gh.github_active_user.as_deref(), Some("gh-user-alpha"));
+        assert!(gh.allows_seal(Kind::Env, "gh-user-alpha"));
     }
 }

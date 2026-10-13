@@ -109,11 +109,11 @@ mod tests {
         let gh = MemoryGh::new();
         gh.auth_login_with_token(b"gho_token_a").unwrap();
         gh.auth_login_with_token(b"gho_token_b").unwrap();
-        gh.auth_switch_user("esdraelon").unwrap();
+        gh.auth_switch_user("gh-user-alpha").unwrap();
         assert_eq!(
             gh.login_tokens(),
             vec![b"gho_token_a".to_vec(), b"gho_token_b".to_vec()]
         );
-        assert_eq!(gh.switch_user().as_deref(), Some("esdraelon"));
+        assert_eq!(gh.switch_user().as_deref(), Some("gh-user-alpha"));
     }
 }

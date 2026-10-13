@@ -9,7 +9,7 @@ use std::time::Instant;
 
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
     "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
     "runtime_files": ["teller.key"],
@@ -44,7 +44,7 @@ fn seal_and_open_round_trip_through_one_slot() {
         &catalog,
         slot,
         lease,
-        "denarius-worker",
+        "app-worker",
         &worker_entries(),
         &kek,
     )
@@ -54,8 +54,8 @@ fn seal_and_open_round_trip_through_one_slot() {
     let lease2 = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
     let opened = open_profile_into_slot(&catalog, &bundle, slot, lease2, &kek).unwrap();
-    assert_eq!(opened.profile, "denarius-worker");
-    assert_eq!(slot.profile_name_bytes(), b"denarius-worker");
+    assert_eq!(opened.profile, "app-worker");
+    assert_eq!(slot.profile_name_bytes(), b"app-worker");
     assert_eq!(slot.secret_count(), 2);
     assert_eq!(slot.secret_bytes(0), Some(&b"db-secret"[..]));
     table.release(lease2).unwrap();
@@ -81,7 +81,7 @@ fn duplicate_seal_entry_names_are_refused() {
         },
     ];
     assert!(matches!(
-        seal_profile_in_slot(&catalog, slot, lease, "denarius-worker", &entries, &kek),
+        seal_profile_in_slot(&catalog, slot, lease, "app-worker", &entries, &kek),
         Err(Error::DuplicateEntry(_))
     ));
 }
@@ -114,7 +114,7 @@ fn open_refuses_entry_outside_catalog_allowlist() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
     let kek = AgeKek::generate();
     let bundle = crate::seal_bytes(
-        "denarius-worker",
+        "app-worker",
         vec![crate::Entry {
             name: "STRIPE_PUBLISHABLE_KEY".into(),
             kind: Kind::Env,
@@ -145,7 +145,7 @@ fn seal_and_open_includes_runtime_file_in_slot() {
         bytes: b"-----BEGIN KEY-----",
     }];
     let bundle =
-        seal_profile_in_slot(&catalog, slot, lease, "denarius-worker", &entries, &kek).unwrap();
+        seal_profile_in_slot(&catalog, slot, lease, "app-worker", &entries, &kek).unwrap();
     table.release(lease).unwrap();
     let lease2 = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
@@ -168,7 +168,7 @@ fn catalog_refuses_disallowed_entry_on_seal() {
         bytes: b"pk",
     }];
     let err =
-        seal_profile_in_slot(&catalog, slot, lease, "denarius-worker", &entries, &kek).unwrap_err();
+        seal_profile_in_slot(&catalog, slot, lease, "app-worker", &entries, &kek).unwrap_err();
     assert!(matches!(err, Error::EntryNotAllowed { .. }));
 }
 
@@ -183,15 +183,15 @@ fn relabeled_header_does_not_open_into_slot() {
         &catalog,
         slot,
         lease,
-        "denarius-worker",
+        "app-worker",
         &worker_entries(),
         &kek,
     )
     .unwrap();
     table.release(lease).unwrap();
 
-    let worker = b"denarius-worker";
-    let relabeled = b"denarius-webabr";
+    let worker = b"app-worker";
+    let relabeled = b"app-webabr";
     assert_eq!(worker.len(), relabeled.len());
     let at = bundle
         .windows(worker.len())
@@ -218,7 +218,7 @@ fn tampered_ciphertext_does_not_open_into_slot() {
         &catalog,
         slot,
         lease,
-        "denarius-worker",
+        "app-worker",
         &worker_entries(),
         &kek,
     )
@@ -239,8 +239,8 @@ fn tampered_ciphertext_does_not_open_into_slot() {
 fn only_one_profile_occupies_slot_between_seals() {
     let catalog = parse_catalog_text(
         r#"{"profiles":[
-          {"name":"denarius-web","inject":["DB_PASS"],"runtime":[]},
-          {"name":"denarius-connect","inject":["STRIPE_SECRET_KEY"],"runtime":[]}
+          {"name":"app-web","inject":["DB_PASS"],"runtime":[]},
+          {"name":"edge-proxy","inject":["STRIPE_SECRET_KEY"],"runtime":[]}
         ]}"#,
     )
     .unwrap();
@@ -253,7 +253,7 @@ fn only_one_profile_occupies_slot_between_seals() {
         &catalog,
         slot,
         lease,
-        "denarius-web",
+        "app-web",
         &[SealEntry {
             name: "DB_PASS".into(),
             kind: Kind::Env,
@@ -270,7 +270,7 @@ fn only_one_profile_occupies_slot_between_seals() {
         &catalog,
         slot,
         lease,
-        "denarius-connect",
+        "edge-proxy",
         &[SealEntry {
             name: "STRIPE_SECRET_KEY".into(),
             kind: Kind::Env,
@@ -284,7 +284,7 @@ fn only_one_profile_occupies_slot_between_seals() {
     let lease = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
     open_profile_into_slot(&catalog, &bundle, slot, lease, &kek).unwrap();
-    assert_eq!(slot.profile_name_bytes(), b"denarius-connect");
+    assert_eq!(slot.profile_name_bytes(), b"edge-proxy");
     assert_eq!(slot.secret_count(), 1);
     table.release(lease).unwrap();
 }

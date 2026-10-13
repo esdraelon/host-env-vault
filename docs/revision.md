@@ -133,6 +133,15 @@ local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
 - Move `ProfileId` enum and `seal` subcommand to `legacy` only; remove Denarius/IDP references from crate docs and clap `about`.
 - **`hydrate gh`** — Generalize to `hydrate tool` driven by catalog extension (tool name, profile, entry mapping) or move to a separate optional binary so core stays generic.
 
+- [x] **M13** `stack/m13-neutral-fixtures` — Neutral catalog fixture names in tests; generic hydrate users; crate description cleanup.
+
+### M13 completion
+
+- Branch: `stack/m13-neutral-fixtures`
+- Commit: `9a7c27b4c5fed9d1dfc40b51aeaba0cb0ec7cbc5`
+- Gates: `./scripts/gate.sh test` — **225** tests passed; per-file `./scripts/gate.sh mutants -- --file …` on all touched `.rs` modules — **311/357 caught (87.1%)** on viable mutants (44 unviable; `catalog/load.rs` and `testing/mutation_closeout.rs` have no production mutants in scope).
+- Catalog-driven tests use `app-web`, `app-worker`, and `edge-proxy` instead of `denarius-*`; GitHub hydrate tests use generic `gh-user-alpha` / `gh-user-beta`; [`Cargo.toml`](Cargo.toml) description and [`legacy/profile`](src/legacy/profile.rs) docs no longer name a specific product. Legacy [`ProfileId`](src/legacy/profile.rs) enum variants kept; `as_str()` aligned to neutral names; `hydrate gh` / `seal` CLI generalization deferred to a later milestone.
+
 ## M14 — Unit templates
 
 Ship maintained templates under `packaging/systemd/` (not a live install yet):

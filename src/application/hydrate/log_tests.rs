@@ -11,7 +11,7 @@ use crate::vault::kek::AgeKek;
 use crate::vault::local_bundle::seal_profile_in_slot;
 use serial_test::serial;
 
-const GITHUB_CATALOG: &str = r#"{"profiles":[{"name":"github","inject":[],"runtime":["esdraelon","megiddo"],"github_active_user":"esdraelon"}]}"#;
+const GITHUB_CATALOG: &str = r#"{"profiles":[{"name":"github","inject":[],"runtime":["gh-user-alpha","gh-user-beta"],"github_active_user":"gh-user-alpha"}]}"#;
 
 fn temp_dir(label: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,7 +31,7 @@ fn seal_github(state_dir: &PathBuf, kek: &AgeKek) {
         .unwrap();
     let slot = table.slot_ref_mut(SYNC_SLOT_INDEX).unwrap();
     let entries = [SealEntry {
-        name: "esdraelon".into(),
+        name: "gh-user-alpha".into(),
         kind: Kind::Env,
         bytes: b"tok",
     }];
@@ -78,7 +78,7 @@ fn log_hydrate_refuse_missing_github_active_user() {
     std::fs::create_dir_all(&state_dir).unwrap();
     write_catalog_snapshot(
         &state_dir,
-        r#"{"profiles":[{"name":"github","inject":[],"runtime":["esdraelon"]}]}"#,
+        r#"{"profiles":[{"name":"github","inject":[],"runtime":["gh-user-alpha"]}]}"#,
     )
     .unwrap();
     let kek = AgeKek::generate();
@@ -112,12 +112,12 @@ fn log_hydrate_gh_logged_in_and_switched() {
     let slot = table.slot_ref_mut(SYNC_SLOT_INDEX).unwrap();
     let entries = [
         SealEntry {
-            name: "esdraelon".into(),
+            name: "gh-user-alpha".into(),
             kind: Kind::Env,
             bytes: b"a",
         },
         SealEntry {
-            name: "megiddo".into(),
+            name: "gh-user-beta".into(),
             kind: Kind::Env,
             bytes: b"b",
         },

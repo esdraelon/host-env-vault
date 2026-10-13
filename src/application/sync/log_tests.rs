@@ -8,7 +8,7 @@ use crate::ports::MemorySsm;
 use crate::testing::log_test_capture::capture_info_logs;
 use crate::vault::kek::AgeKek;
 
-const WEB: &str = r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+const WEB: &str = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
 
 fn temp_dir(label: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,7 +38,7 @@ fn log_sync_catalog_loaded_and_sealed() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "secret");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "secret");
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
         let mut table = SlotTable::new();
@@ -93,7 +93,7 @@ fn log_sync_reject_oversize_parameter() {
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB);
     let huge = "x".repeat(SECRET_MAX_BYTES + 1);
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", huge);
+    ssm.put("/host-env-vault/app-web/DB_PASS", huge);
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
         let mut table = SlotTable::new();

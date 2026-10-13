@@ -10,7 +10,7 @@ use std::time::Instant;
 
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
     "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
     "runtime_files": ["teller.key"],
@@ -27,7 +27,7 @@ fn entry_outside_catalog_is_refused_on_seal() {
         kind: Kind::Env,
         bytes: b"pk_test",
     }];
-    let err = validate_seal_entries(&catalog, "denarius-worker", &entries).unwrap_err();
+    let err = validate_seal_entries(&catalog, "app-worker", &entries).unwrap_err();
     assert!(matches!(err, Error::EntryNotAllowed { .. }));
 }
 
@@ -48,8 +48,8 @@ fn unknown_profile_is_refused_on_seal() {
 #[test]
 fn entry_outside_runtime_list_is_refused_on_serve() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
-    assert!(validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "DB_PASS").is_err());
-    assert!(validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "APP_KEY").is_ok());
+    assert!(validate_serve_entry(&catalog, "app-worker", Kind::Env, "DB_PASS").is_err());
+    assert!(validate_serve_entry(&catalog, "app-worker", Kind::Env, "APP_KEY").is_ok());
 }
 
 #[test]
@@ -60,8 +60,8 @@ fn catalog_driven_slot_bind_does_not_use_profile_id_enum() {
     let mut table = SlotTable::new();
     let lease = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
-    bind_catalog_profile(&catalog, "denarius-worker", slot, lease).unwrap();
-    assert_eq!(slot.profile_name_bytes(), b"denarius-worker");
+    bind_catalog_profile(&catalog, "app-worker", slot, lease).unwrap();
+    assert_eq!(slot.profile_name_bytes(), b"app-worker");
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn seal_rejects_invalid_name_and_env_value() {
         bytes: b"v",
     }];
     assert!(matches!(
-        validate_seal_entries(&catalog, "denarius-worker", &bad_name),
+        validate_seal_entries(&catalog, "app-worker", &bad_name),
         Err(Error::InvalidName(_))
     ));
     let bad_value = vec![SealEntry {
@@ -82,21 +82,21 @@ fn seal_rejects_invalid_name_and_env_value() {
         bytes: b"#bad",
     }];
     assert!(matches!(
-        validate_seal_entries(&catalog, "denarius-worker", &bad_value),
+        validate_seal_entries(&catalog, "app-worker", &bad_value),
         Err(Error::InvalidEnvValue(_))
     ));
     assert!(matches!(
-        validate_seal_entries(&catalog, "denarius-worker", &[]),
+        validate_seal_entries(&catalog, "app-worker", &[]),
         Err(Error::EmptyBundle)
     ));
 }
 
 #[test]
 fn serve_rejects_non_socket_profile() {
-    let text = r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#;
+    let text = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[],"socket":false}]}"#;
     let catalog = parse_catalog_text(text).unwrap();
     assert!(matches!(
-        validate_serve_entry(&catalog, "denarius-web", Kind::Env, "DB_PASS"),
+        validate_serve_entry(&catalog, "app-web", Kind::Env, "DB_PASS"),
         Err(Error::EntryNotAllowed { .. })
     ));
 }
@@ -153,13 +153,13 @@ fn allowed_seal_entries_pass_for_inject_and_runtime() {
             bytes: b"app-key",
         },
     ];
-    assert!(validate_seal_entries(&catalog, "denarius-worker", &entries).is_ok());
+    assert!(validate_seal_entries(&catalog, "app-worker", &entries).is_ok());
 }
 
 #[test]
 fn inject_only_entry_seals_without_being_on_runtime_list() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
-    let worker = catalog.profile("denarius-worker").unwrap();
+    let worker = catalog.profile("app-worker").unwrap();
     assert!(worker.allows_seal(Kind::Env, "DB_PASS"));
     assert!(!worker.allows_serve(Kind::Env, "DB_PASS"));
     let entries = vec![SealEntry {
@@ -167,13 +167,13 @@ fn inject_only_entry_seals_without_being_on_runtime_list() {
         kind: Kind::Env,
         bytes: b"only-inject",
     }];
-    assert!(validate_seal_entries(&catalog, "denarius-worker", &entries).is_ok());
+    assert!(validate_seal_entries(&catalog, "app-worker", &entries).is_ok());
 }
 
 #[test]
 fn runtime_file_seals_without_inject_files() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
-    let worker = catalog.profile("denarius-worker").unwrap();
+    let worker = catalog.profile("app-worker").unwrap();
     assert!(worker.inject_files().is_empty());
     assert_eq!(worker.runtime_files(), &["teller.key"]);
     assert!(worker.allows_seal(Kind::File, "teller.key"));
@@ -182,15 +182,15 @@ fn runtime_file_seals_without_inject_files() {
         kind: Kind::File,
         bytes: b"pem-bytes",
     }];
-    assert!(validate_seal_entries(&catalog, "denarius-worker", &entries).is_ok());
+    assert!(validate_seal_entries(&catalog, "app-worker", &entries).is_ok());
 }
 
 #[test]
 fn catalog_lists_env_and_file_slices_from_parse() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
     let names: Vec<_> = catalog.profile_names().collect();
-    assert_eq!(names, vec!["denarius-worker"]);
-    let worker = catalog.profile("denarius-worker").unwrap();
+    assert_eq!(names, vec!["app-worker"]);
+    let worker = catalog.profile("app-worker").unwrap();
     assert_eq!(worker.inject_env(), &["DB_PASS", "STRIPE_WEBHOOK_SECRET"]);
     assert_eq!(worker.runtime_env(), &["APP_KEY", "STRIPE_SECRET_KEY"]);
     assert!(worker.inject_files().is_empty());

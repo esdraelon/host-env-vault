@@ -10,7 +10,7 @@ use crate::ports::MemorySsm;
 use crate::testing::log_test_capture::capture_info_logs;
 use crate::vault::kek::AgeKek;
 
-const WORKER: &str = r#"{"profiles":[{"name":"denarius-worker","inject":["DB_PASS"],"runtime":["APP_KEY"],"inject_files":[],"runtime_files":[]}]}"#;
+const WORKER: &str = r#"{"profiles":[{"name":"app-worker","inject":["DB_PASS"],"runtime":["APP_KEY"],"inject_files":[],"runtime_files":[]}]}"#;
 
 fn temp_dir(label: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,8 +32,8 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
     let dest = root.join("dest");
     let ssm = MemorySsm::new();
     ssm.put(crate::catalog::DEFAULT_CATALOG_PARAMETER, WORKER);
-    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
-    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "key");
+    ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/app-worker/APP_KEY", "key");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_catalog_from_text(WORKER, DEFAULT_SECRETS_PREFIX, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
@@ -42,7 +42,7 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
         render_from_vault(
             &kek,
             &mut table,
-            "denarius-worker",
+            "app-worker",
             &RenderOptions::new(root.join("kek.age"), state_dir, dest, None),
         )
         .unwrap();
@@ -66,7 +66,7 @@ fn log_render_refuses_unknown_profile() {
     let state_dir = root.join("state");
     write_catalog_snapshot(
         &state_dir,
-        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#,
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
     )
     .unwrap();
     let kek = AgeKek::generate();

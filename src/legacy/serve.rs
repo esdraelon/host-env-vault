@@ -176,14 +176,14 @@ mod tests {
         let dir = PathBuf::from(format!("/tmp/hev-sock-name-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
+        let listener = bind_runtime_socket(&dir, "app-worker").unwrap();
         let path = listener
             .local_addr()
             .unwrap()
             .as_pathname()
             .expect("bound unix socket path")
             .to_path_buf();
-        assert_eq!(path, dir.join("sockets").join("denarius-worker.sock"));
+        assert_eq!(path, dir.join("sockets").join("app-worker.sock"));
         drop(listener);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -236,8 +236,8 @@ mod tests {
         let dir = PathBuf::from(format!("/tmp/hev-poll-in-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
-        let path = dir.join("sockets").join("denarius-worker.sock");
+        let listener = bind_runtime_socket(&dir, "app-worker").unwrap();
+        let path = dir.join("sockets").join("app-worker.sock");
         let waiter = thread::spawn(move || {
             wait_for_socket(&listener, std::time::Duration::from_secs(2)).unwrap()
         });
@@ -276,7 +276,7 @@ mod tests {
         let dir = PathBuf::from(format!("/tmp/hev-poll-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
-        let listener = bind_runtime_socket(&dir, "denarius-worker").unwrap();
+        let listener = bind_runtime_socket(&dir, "app-worker").unwrap();
         assert!(!wait_for_socket(&listener, std::time::Duration::from_millis(10)).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }

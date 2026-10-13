@@ -12,7 +12,7 @@ use crate::ports::{MemoryGh, MemorySsm};
 use crate::vault::kek::AgeKek;
 use crate::vault::local_bundle::seal_profile_in_slot;
 
-const GITHUB_CATALOG: &str = r#"{"profiles":[{"name":"github","inject":[],"runtime":["esdraelon","megiddo"],"github_active_user":"esdraelon"}]}"#;
+const GITHUB_CATALOG: &str = r#"{"profiles":[{"name":"github","inject":[],"runtime":["gh-user-alpha","gh-user-beta"],"github_active_user":"gh-user-alpha"}]}"#;
 
 fn temp_state_dir(label: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,14 +30,14 @@ fn seal_github_bundle(state_dir: &PathBuf, kek: &AgeKek) {
     let slot = table.slot_ref_mut(SYNC_SLOT_INDEX).unwrap();
     let entries = [
         SealEntry {
-            name: "esdraelon".into(),
+            name: "gh-user-alpha".into(),
             kind: Kind::Env,
-            bytes: b"gho_esdraelon_token",
+            bytes: b"gho_gh-user-alpha_token",
         },
         SealEntry {
-            name: "megiddo".into(),
+            name: "gh-user-beta".into(),
             kind: Kind::Env,
-            bytes: b"gho_megiddo_token",
+            bytes: b"gho_gh-user-beta_token",
         },
     ];
     let bundle =
@@ -65,11 +65,11 @@ fn hydrate_gh_feeds_each_token_and_switches_active_user() {
     assert_eq!(
         gh.login_tokens(),
         vec![
-            b"gho_esdraelon_token".to_vec(),
-            b"gho_megiddo_token".to_vec()
+            b"gho_gh-user-alpha_token".to_vec(),
+            b"gho_gh-user-beta_token".to_vec()
         ]
     );
-    assert_eq!(gh.switch_user().as_deref(), Some("esdraelon"));
+    assert_eq!(gh.switch_user().as_deref(), Some("gh-user-alpha"));
     assert!(!table.slot_ref(HYDRATE_SLOT_INDEX).unwrap().in_use());
     let _ = std::fs::remove_dir_all(&state_dir);
 }
@@ -101,7 +101,7 @@ fn hydrate_gh_refuses_catalog_without_active_user() {
     let state_dir = temp_state_dir("no-active");
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).unwrap();
-    let catalog_json = r#"{"profiles":[{"name":"github","inject":[],"runtime":["esdraelon"]}]}"#;
+    let catalog_json = r#"{"profiles":[{"name":"github","inject":[],"runtime":["gh-user-alpha"]}]}"#;
     write_catalog_snapshot(&state_dir, catalog_json).unwrap();
     let kek = AgeKek::generate();
     seal_github_bundle(&state_dir, &kek);
@@ -163,8 +163,8 @@ fn hydrate_gh_after_sync_does_not_call_ssm() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let ssm = MemorySsm::new();
     ssm.put(crate::catalog::DEFAULT_CATALOG_PARAMETER, GITHUB_CATALOG);
-    ssm.put("/host-env-vault/github/esdraelon", "gho_esdraelon_token");
-    ssm.put("/host-env-vault/github/megiddo", "gho_megiddo_token");
+    ssm.put("/host-env-vault/github/gh-user-alpha", "gho_gh-user-alpha_token");
+    ssm.put("/host-env-vault/github/gh-user-beta", "gho_gh-user-beta_token");
     let kek = AgeKek::generate();
     let identity = state_dir.join("kek.age");
     kek.write_identity(&identity).unwrap();
@@ -182,6 +182,6 @@ fn hydrate_gh_after_sync_does_not_call_ssm() {
     let options = HydrateGhOptions::new(identity, state_dir.clone());
     hydrate_gh_with_catalog(&gh, &kek, &mut table, &catalog, &options).unwrap();
     assert_eq!(gh.login_tokens().len(), 2);
-    assert_eq!(gh.switch_user().as_deref(), Some("esdraelon"));
+    assert_eq!(gh.switch_user().as_deref(), Some("gh-user-alpha"));
     let _ = std::fs::remove_dir_all(&state_dir);
 }

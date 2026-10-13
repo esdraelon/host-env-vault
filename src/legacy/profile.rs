@@ -49,8 +49,8 @@ impl Kind {
     }
 }
 
-/// Allowlist for one profile. `provisional` means the IDP split is a hypothesis
-/// until each process is traced. Seal still refuses names outside the list.
+/// Allowlist for one legacy spike profile. `provisional` marks names that may
+/// still move when processes are traced. Seal still refuses names outside the list.
 #[derive(Debug, Clone, Copy)]
 pub struct Policy {
     pub provisional: bool,
@@ -64,9 +64,9 @@ pub struct Policy {
 impl ProfileId {
     pub fn as_str(self) -> &'static str {
         match self {
-            ProfileId::DenariusWeb => "denarius-web",
-            ProfileId::DenariusWorker => "denarius-worker",
-            ProfileId::DenariusConnect => "denarius-connect",
+            ProfileId::DenariusWeb => "app-web",
+            ProfileId::DenariusWorker => "app-worker",
+            ProfileId::DenariusConnect => "edge-proxy",
             ProfileId::IdpHttp => "idp-http",
             ProfileId::IdpWorker => "idp-worker",
         }
@@ -184,7 +184,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn denarius_personalities_do_not_share_stripe_secret_material() {
+    fn legacy_spike_profiles_do_not_share_stripe_secret_material() {
         let web = ProfileId::DenariusWeb.policy();
         let worker = ProfileId::DenariusWorker.policy();
         let connect = ProfileId::DenariusConnect.policy();

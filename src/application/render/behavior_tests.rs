@@ -15,7 +15,7 @@ use crate::vault::kek::AgeKek;
 
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
-    "name": "denarius-worker",
+    "name": "app-worker",
     "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
     "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
     "inject_files": [],
@@ -39,11 +39,11 @@ fn mode_of(path: &std::path::Path) -> u32 {
 
 fn seed_worker_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER_CATALOG);
-    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
-    ssm.put("/host-env-vault/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
-    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "app-key");
-    ssm.put("/host-env-vault/denarius-worker/STRIPE_SECRET_KEY", "sk");
-    ssm.put("/host-env-vault/denarius-worker/teller.key", "teller-bytes");
+    ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/app-worker/STRIPE_WEBHOOK_SECRET", "whsec");
+    ssm.put("/host-env-vault/app-worker/APP_KEY", "app-key");
+    ssm.put("/host-env-vault/app-worker/STRIPE_SECRET_KEY", "sk");
+    ssm.put("/host-env-vault/app-worker/teller.key", "teller-bytes");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
 
     let render_options =
         RenderOptions::new(root.join("kek.age"), state_dir.clone(), dest.clone(), None);
-    render_from_vault(&kek, &mut table, "denarius-worker", &render_options).unwrap();
+    render_from_vault(&kek, &mut table, "app-worker", &render_options).unwrap();
 
     assert_eq!(mode_of(&dest), 0o700);
     assert_eq!(mode_of(&dest.join("secrets.env")), 0o400);
@@ -106,14 +106,14 @@ fn render_refuses_bundle_profile_mismatch() {
     write_catalog_snapshot(
         &state_dir,
         r#"{"profiles":[
-          {"name":"denarius-web","inject":["DB_PASS"],"runtime":[]},
-          {"name":"denarius-worker","inject":["DB_PASS"],"runtime":["APP_KEY"]}
+          {"name":"app-web","inject":["DB_PASS"],"runtime":[]},
+          {"name":"app-worker","inject":["DB_PASS"],"runtime":["APP_KEY"]}
         ]}"#,
     )
     .unwrap();
     let kek = AgeKek::generate();
     let bundle = crate::vault::bundle::seal_bytes(
-        "denarius-web",
+        "app-web",
         vec![crate::vault::bundle::Entry {
             name: "DB_PASS".into(),
             kind: Kind::Env,
@@ -123,7 +123,7 @@ fn render_refuses_bundle_profile_mismatch() {
     )
     .unwrap();
     fs::write(
-        crate::application::sync::bundle_path(&state_dir, "denarius-worker"),
+        crate::application::sync::bundle_path(&state_dir, "app-worker"),
         bundle,
     )
     .unwrap();
@@ -133,7 +133,7 @@ fn render_refuses_bundle_profile_mismatch() {
         render_from_vault(
             &kek,
             &mut table,
-            "denarius-worker",
+            "app-worker",
             &RenderOptions::new(root.join("kek.age"), state_dir, dest, None),
         ),
         Err(Error::ProfileMismatch { .. })
@@ -169,7 +169,7 @@ fn render_refuses_dirty_destination() {
 
     let options = RenderOptions::new(root.join("kek.age"), state_dir, dest, None);
     assert!(matches!(
-        render_from_vault(&kek, &mut table, "denarius-worker", &options),
+        render_from_vault(&kek, &mut table, "app-worker", &options),
         Err(Error::DestNotEmpty(_))
     ));
     let _ = fs::remove_dir_all(&root);
@@ -191,9 +191,9 @@ fn render_gid_override_applies_group_readable_modes() {
     let ssm = MemorySsm::new();
     ssm.put(
         DEFAULT_CATALOG_PARAMETER,
-        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#,
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
     );
-    ssm.put("/host-env-vault/denarius-web/DB_PASS", "secret");
+    ssm.put("/host-env-vault/app-web/DB_PASS", "secret");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_from_ssm(
@@ -213,7 +213,7 @@ fn render_gid_override_applies_group_readable_modes() {
     render_from_vault(
         &kek,
         &mut table,
-        "denarius-web",
+        "app-web",
         &RenderOptions::new(root.join("kek.age"), state_dir, dest.clone(), Some(33)),
     )
     .unwrap();
