@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: **M10+** in [revision.md](revision.md) (M0–M9 stack complete). Next stacked branches: secret-source port → local dev sync → config file → neutral fixtures → systemd templates (M14) → systemd installer (M15) → profile setup wizard (M16).
+Resume from: **M13+** in [revision.md](revision.md) (M0–M12 complete on stack). Next: neutral fixtures → systemd templates → installer → profile wizard. Gates: `./scripts/gate.sh`.
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -134,10 +134,11 @@ export LLVM_PROFDATA=/opt/homebrew/Cellar/llvm/22.1.8/bin/llvm-profdata
 CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-only
 ```
 
-Mutation command (library scope; `src/main.rs` CLI adapters are excluded in `mutants.toml`. Pass `--test-threads=1` to `cargo test` so log-capture tests stay deterministic under mutation runs):
+Mutation command (library scope; `src/main.rs` excluded in `mutants.toml`). Prefer **`scripts/gate.sh`** so `/tmp/hev-target` is reused and removed on exit (see `docs/revision.md` disk/gates):
 
 ```bash
-CARGO_TARGET_DIR=/tmp/host-env-vault-target-m09-mutants cargo mutants -- -- --test-threads=1
+./scripts/gate.sh test
+./scripts/gate.sh mutants -- --file 'src/application/sync/mod.rs'
 ```
 
 - [x] **M0** `stack/m00-spike` — Record the uncommitted spike, README, packaging unit, and this plan. Hygiene only: do not start the slot table. `cargo test` must pass. Coverage and mutation gates are waived on this commit because M1 replaces the heap design.

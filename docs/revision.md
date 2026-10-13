@@ -267,7 +267,28 @@ stack/m15-systemd-installer
 stack/m16-profile-wizard
 ```
 
-Each Rust milestone: implement → `cargo test` → mutation gate on touched modules. M14–M16 are mostly `packaging/` and `scripts/`; gate is shellcheck, template verify, and documented manual QA (no mutation gate on shell).
+Each Rust milestone: implement → `scripts/gate.sh` → mutation on touched files only → cleanup (automatic). M14–M16 are mostly `packaging/` and `scripts/`; gate is shellcheck, template verify, and documented manual QA (no mutation gate on shell).
+
+### Disk / gates (all Rust milestones M10+)
+
+Use **one** disposable target dir; do **not** create `/tmp/host-env-vault-target-mNN*` trees.
+
+```bash
+# Full suite
+./scripts/gate.sh test
+
+# Scoped mutants (required — pass every touched .rs module)
+./scripts/gate.sh mutants -- --file src/config/mod.rs
+
+# Or test + mutants in one invocation
+./scripts/gate.sh full -- --file 'src/foo/*.rs' --file src/bar/mod.rs
+```
+
+`scripts/gate.sh` sets `CARGO_TARGET_DIR=/tmp/hev-target` (override with `HEV_TARGET_DIR`), runs with `RUST_TEST_THREADS=1`, and **deletes the target dir and `mutants.out` on exit**. After a failed gate, fix and re-run; no manual `/tmp` janitor unless something crashed outside the script.
+
+Optional: `./scripts/cleanup-tmp-builds.sh` removes legacy `/tmp/host-env-vault-target*` directories.
+
+Orchestrator workers **must** use `scripts/gate.sh` for test/mutants gates and confirm `/tmp/hev-target` is gone when finished (`test ! -d /tmp/hev-target`).
 
 ### Milestone gates (M14–M16)
 
