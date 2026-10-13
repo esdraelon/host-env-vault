@@ -768,109 +768,80 @@ mod behavior_tests {
 
 #[cfg(test)]
 mod log_tests {
+    use serial_test::serial;
     use super::*;
-    use std::sync::{Arc, Mutex};
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    use crate::log_test_capture::capture_info_logs;
 
-    fn capture_logs<F: FnOnce()>(test: F) -> Vec<String> {
-        let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let sink = lines.clone();
-        let layer = tracing_subscriber::fmt::layer()
-            .with_ansi(false)
-            .without_time()
-            .with_target(true)
-            .with_writer(move || LogWriter(sink.clone()))
-            .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-        let _guard = tracing_subscriber::registry().with(layer).set_default();
-        test();
-        let captured = lines.lock().unwrap().clone();
-        captured
-    }
-
-    struct LogWriter(Arc<Mutex<Vec<String>>>);
-
-    impl std::io::Write for LogWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let s = String::from_utf8_lossy(buf).to_string();
-            self.0.lock().unwrap().push(s);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn joined(lines: &[String]) -> String {
-        lines.concat()
-    }
-
+    #[serial]
     #[test]
     fn log_reject_oversize_secret() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let (mut table, lease, _) = super::behavior_tests::lease_at(0);
             let slot = table.slot_ref_mut(0).unwrap();
             let big = vec![b'x'; SECRET_MAX_BYTES + 1];
             let _ = slot.put_secret(lease, b"N", &big);
         });
-        let text = joined(&lines);
         assert!(
             text.contains("reject oversize secret"),
             "logs: {text}"
         );
     }
 
+    #[serial]
     #[test]
     fn log_reject_oversize_name() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let (mut table, lease, _) = super::behavior_tests::lease_at(0);
             let slot = table.slot_ref_mut(0).unwrap();
             let long = vec![b'n'; NAME_MAX_BYTES + 1];
             let _ = slot.set_profile_name(lease, &long);
         });
-        assert!(joined(&lines).contains("reject oversize name"));
+        assert!(text.contains("reject oversize name"));
     }
 
+    #[serial]
     #[test]
     fn log_wipe_on_release() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let (mut table, lease, _) = super::behavior_tests::lease_at(0);
             table.release(lease).unwrap();
         });
-        assert!(joined(&lines).contains("slot wipe"));
+        assert!(text.contains("slot wipe"));
     }
 
+    #[serial]
     #[test]
     fn log_stale_generation_reject() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let (mut table, lease, _) = super::behavior_tests::lease_at(0);
             table.wipe_slot(0);
             let slot = table.slot_ref_mut(0).unwrap();
             let _ = slot.put_secret(lease, b"K", b"v");
         });
-        assert!(joined(&lines).contains("stale generation reject"));
+        assert!(text.contains("stale generation reject"));
     }
 
+    #[serial]
     #[test]
     fn log_reject_oversize_document() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let (mut table, lease, _) = super::behavior_tests::lease_at(0);
             let slot = table.slot_ref_mut(0).unwrap();
             let big = vec![b'd'; DOCUMENT_MAX_BYTES + 1];
             let _ = slot.put_document(lease, b"doc", &big);
         });
-        assert!(joined(&lines).contains("reject oversize document"));
+        assert!(text.contains("reject oversize document"));
     }
 
+    #[serial]
     #[test]
     fn log_sweep_expired_lease() {
-        let lines = capture_logs(|| {
+        let text = capture_info_logs(|| {
             let mut table = SlotTable::new();
             let start = Instant::now();
             let _lease = table.try_acquire(0, start).unwrap();
             table.sweep_expired(start + Duration::from_millis(LEASE_MS));
         });
-        let text = joined(&lines);
         assert!(text.contains("sweep expired lease"), "{text}");
         assert!(text.contains("slot wipe"));
     }

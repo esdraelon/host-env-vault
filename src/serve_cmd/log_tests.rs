@@ -1,13 +1,12 @@
 use std::fs;
+use serial_test::serial;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::catalog::{
     load_catalog_snapshot, parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER,
 };
 use crate::kek::AgeKek;
+use crate::log_test_capture::capture_info_logs;
 use crate::port::MemorySsm;
 use crate::profile::Kind;
 use crate::serve_cmd::{bind_serve_socket, fetch_runtime_entry, ServeOptions};
@@ -24,45 +23,17 @@ const WORKER: &str = r#"{
   }]
 }"#;
 
-fn capture_logs<F: FnOnce()>(test: F) -> Vec<String> {
-    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let sink = lines.clone();
-    let layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .without_time()
-        .with_target(true)
-        .with_writer(move || LogWriter(sink.clone()))
-        .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-    let _guard = tracing_subscriber::registry().with(layer).set_default();
-    test();
-    let captured = lines.lock().unwrap().clone();
-    captured
-}
-
-struct LogWriter(Arc<Mutex<Vec<String>>>);
-
-impl std::io::Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().push(String::from_utf8_lossy(buf).to_string());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-fn joined(lines: &[String]) -> String {
-    lines.concat()
-}
-
 fn temp_dir(label: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "hev-serve-log-{label}-{}",
+        "hev-serve-log-{label}-{}-{id}",
         std::process::id()
     ))
 }
 
+#[serial]
 #[test]
 fn log_serve_deny_runtime_entry_and_return_success() {
     let root = temp_dir("deny-ok");
@@ -90,7 +61,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
     .unwrap();
     let catalog = load_catalog_snapshot(&state_dir).unwrap();
 
-    let deny_lines = capture_logs(|| {
+    let deny_text = capture_info_logs(|| {
         let mut t = SlotTable::new();
         let _ = fetch_runtime_entry(
             &kek,
@@ -102,13 +73,12 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             "DB_PASS",
         );
     });
-    let deny_text = joined(&deny_lines);
     assert!(
         deny_text.contains("catalog refuse serve entry"),
         "{deny_text}"
     );
 
-    let ok_lines = capture_logs(|| {
+    let ok_text = capture_info_logs(|| {
         let mut t = SlotTable::new();
         let _ = fetch_runtime_entry(
             &kek,
@@ -120,7 +90,6 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             "APP_KEY",
         );
     });
-    let ok_text = joined(&ok_lines);
     assert!(
         ok_text.contains("serve returned runtime entry"),
         "{ok_text}"
@@ -128,6 +97,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[serial]
 #[test]
 fn log_serve_refuse_profile_without_socket() {
     let catalog_text =
@@ -144,10 +114,12 @@ fn log_serve_refuse_profile_without_socket() {
         root.join("run"),
         "denarius-web",
     );
-    let lines = capture_logs(|| {
-        let _ = bind_serve_socket(&options);
+    let text = capture_info_logs(|| {
+        assert!(matches!(
+            bind_serve_socket(&options),
+            Err(crate::error::Error::EntryNotAllowed { .. })
+        ));
     });
-    let text = joined(&lines);
     assert!(
         text.contains("serve refuse profile without socket"),
         "{text}"
@@ -155,6 +127,7 @@ fn log_serve_refuse_profile_without_socket() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[serial]
 #[test]
 fn log_serve_deny_peer_uid() {
     use std::os::unix::net::UnixStream;
@@ -177,7 +150,7 @@ fn log_serve_deny_peer_uid() {
     let (mut server, client) = UnixStream::pair().unwrap();
     drop(client);
 
-    let lines = capture_logs(|| {
+    let text = capture_info_logs(|| {
         let _ = crate::serve_cmd::handle_serve_connection(
             &mut server,
             &kek,
@@ -186,6 +159,6 @@ fn log_serve_deny_peer_uid() {
             &options,
         );
     });
-    assert!(joined(&lines).contains("serve deny peer uid"));
+    assert!(text.contains("serve deny peer uid"));
     fs::remove_dir_all(root).unwrap();
 }

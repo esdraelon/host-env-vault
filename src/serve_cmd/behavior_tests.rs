@@ -103,6 +103,51 @@ fn serve_returns_runtime_entry_from_local_bundle_without_ssm() {
 }
 
 #[test]
+fn serve_refuses_bundle_profile_mismatch() {
+    let root = temp_root("profile-mismatch");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let (kek, state_dir) = sync_worker_vault(&root);
+    let extended_catalog = r#"{
+  "profiles": [
+    {"name":"denarius-web","inject":["DB_PASS"],"runtime":[]},
+    {"name":"denarius-worker","inject":["DB_PASS","STRIPE_WEBHOOK_SECRET"],"runtime":["APP_KEY","STRIPE_SECRET_KEY"],"inject_files":[],"runtime_files":["teller.key"],"socket":true,"require_uid":33}
+  ]
+}"#;
+    fs::write(state_dir.join("catalog.json"), extended_catalog.as_bytes()).unwrap();
+    let catalog = crate::catalog::load_catalog_snapshot(&state_dir).unwrap();
+    let bundle = crate::bundle::seal_bytes(
+        "denarius-web",
+        vec![crate::bundle::Entry {
+            name: "DB_PASS".into(),
+            kind: Kind::Env,
+            bytes: zeroize::Zeroizing::new(b"wrong-profile".to_vec()),
+        }],
+        &kek,
+    )
+    .unwrap();
+    fs::write(
+        crate::sync::bundle_path(&state_dir, "denarius-worker"),
+        bundle,
+    )
+    .unwrap();
+    let mut table = SlotTable::new();
+    assert!(matches!(
+        fetch_runtime_entry(
+            &kek,
+            &mut table,
+            &catalog,
+            "denarius-worker",
+            &state_dir,
+            Kind::Env,
+            "APP_KEY",
+        ),
+        Err(Error::ProfileMismatch { .. })
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn serve_denies_inject_only_entry_on_worker_socket() {
     let root = temp_root("wrong-entry");
     let _ = fs::remove_dir_all(&root);
@@ -139,26 +184,22 @@ fn serve_denies_peer_uid_mismatch_on_socket() {
     };
     let catalog_text = WORKER_CATALOG.replace("\"require_uid\": 33", &format!("\"require_uid\": {wrong_uid}"));
     fs::write(state_dir.join("catalog.json"), catalog_text.as_bytes()).unwrap();
-    let runtime_dir = root.join("run");
     let catalog = crate::catalog::load_catalog_snapshot(&state_dir).unwrap();
-    let listener = bind_runtime_socket(&runtime_dir, "denarius-worker").unwrap();
-    let path = runtime_dir.join("sockets").join("denarius-worker.sock");
     let options = ServeOptions::new(
         root.join("kek.age"),
         state_dir,
-        runtime_dir.clone(),
+        root.join("run"),
         "denarius-worker",
     );
     let mut table = SlotTable::new();
+    let (mut server, mut client) = UnixStream::pair().unwrap();
 
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let err = handle_serve_connection(&mut stream, &kek, &mut table, &catalog, &options)
+        let err = handle_serve_connection(&mut server, &kek, &mut table, &catalog, &options)
             .unwrap_err();
         assert!(matches!(err, Error::PeerUid { .. }));
     });
 
-    let mut client = UnixStream::connect(&path).unwrap();
     let denied = exchange(&mut client, OP_FETCH_ENV, b"APP_KEY").unwrap();
     assert_eq!(denied.status, ST_DENIED);
     drop(client);

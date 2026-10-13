@@ -243,5 +243,33 @@ mod unit_tests {
         assert!(!is_secret_shaped_s3_key("nginx/amtgard.conf"));
         assert!(!is_secret_shaped_s3_key("denarius.env"));
         assert!(is_secret_shaped_s3_key("backup_api_key.env"));
+        assert!(is_secret_shaped_s3_key("tls.pem"));
+        assert!(is_secret_shaped_s3_key("signing.p8"));
+        assert!(is_secret_shaped_s3_key("host.age"));
+        assert!(is_secret_shaped_s3_key("client_secret.env"));
+        assert!(is_secret_shaped_s3_key("db_password.cfg"));
+        assert!(is_secret_shaped_s3_key("oauth-private.cfg"));
+    }
+
+    #[test]
+    fn pull_rejects_each_secret_shaped_catalog_document_key() {
+        for key in [
+            "vault.pem",
+            "oauth-private.key",
+            "backup_api_key.env",
+            "client_secret.env",
+        ] {
+            let catalog = parse_catalog_text(&format!(
+                r#"{{"profiles":[{{"name":"nginx","inject":[],"runtime":[],"documents":["{key}"]}}]}}"#
+            ))
+            .unwrap();
+            let nginx = catalog.profile("nginx").unwrap();
+            let s3 = MemoryS3::new();
+            s3.put(key, b"plain-bytes");
+            assert!(
+                matches!(pull_profile_documents(&s3, "", nginx), Err(Error::RuntimeBody)),
+                "expected reject for {key}"
+            );
+        }
     }
 }

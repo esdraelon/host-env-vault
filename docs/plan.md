@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M9
+Resume from: (none — M0–M9 stack complete)
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -132,6 +132,12 @@ Coverage command (Homebrew LLVM; use a dedicated `CARGO_TARGET_DIR`, not the sam
 export LLVM_COV=/opt/homebrew/Cellar/llvm/22.1.8/bin/llvm-cov
 export LLVM_PROFDATA=/opt/homebrew/Cellar/llvm/22.1.8/bin/llvm-profdata
 CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-only
+```
+
+Mutation command (library scope; `src/main.rs` CLI adapters are excluded in `mutants.toml`. Pass `--test-threads=1` to `cargo test` so log-capture tests stay deterministic under mutation runs):
+
+```bash
+CARGO_TARGET_DIR=/tmp/host-env-vault-target-m09-mutants cargo mutants -- -- --test-threads=1
 ```
 
 - [x] **M0** `stack/m00-spike` — Record the uncommitted spike, README, packaging unit, and this plan. Hygiene only: do not start the slot table. `cargo test` must pass. Coverage and mutation gates are waived on this commit because M1 replaces the heap design.
@@ -214,7 +220,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08 cargo test` (194 tests, full suite) — passed; line coverage **95.41%** on `src/` (`cargo llvm-cov --lib`, dedicated `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08-cov`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08-mutants cargo mutants --file src/port/gh.rs --file 'src/hydrate_cmd/*.rs'` — **15/15 caught (100%)** on M8 scope (3 unviable).
 - Log-tested decision branches (separate `hydrate_cmd::log_tests` module): hydrate refuse profile not in catalog, hydrate refuse missing github active user, hydrate gh logged in account, hydrate gh switched active user.
 - [`GhPort`](src/port/gh.rs) + [`MemoryGh`](src/port/gh.rs); `hydrate gh` CLI opens local `github.hev` through hydrate slot 3, feeds each catalog runtime token to `gh auth login --with-token`, then `gh auth switch --user` from `github_active_user`; production [`ProcessGh`](src/main.rs) wraps the real CLI.
-- [ ] **M9** `stack/m09-mutation` — Mutation closeout. `cargo-mutants` at 80% across the crate. The mutations that must be caught are the bounds checks, the wipe, the generation, the profile mismatch, the lease expiry, and the keep-the-last-bundle path. Fill any gaps the earlier milestones left.
+- [x] **M9** `stack/m09-mutation` — Mutation closeout. `cargo-mutants` at 80% across the library (see mutation command above). The mutations that must be caught are the bounds checks, the wipe, the generation, the profile mismatch, the lease expiry, and the keep-the-last-bundle path. Fill any gaps the earlier milestones left.
+
+### M9 completion
+
+- Branch: `stack/m09-mutation`
+- Commit: `30a944913725a806b38b27386c9d9c3630d35656`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m09 cargo test` (199 tests, full suite) — passed; line coverage **95.73%** on `src/` (`cargo llvm-cov --lib`, dedicated `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m09-cov`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m09-mutants cargo mutants -- -- --test-threads=1` — **411/467 caught (88.0%)** on library scope (549 mutants, 82 unviable, 51 missed, 5 timeouts; `src/main.rs` excluded).
+- Guard tests: `mutation_closeout` (bounds, wipe, generation, lease, keep-last-bundle); render/serve profile mismatch; document secret-shaped S3 keys; shared `log_test_capture` with `serial_test` on log modules.
+- **All milestones M0–M9 on the stack are complete.**
 
 ## Later
 

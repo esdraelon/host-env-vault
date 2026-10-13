@@ -24,6 +24,12 @@ pub mod serve_cmd;
 pub mod slot;
 pub mod sync;
 
+#[cfg(test)]
+mod log_test_capture;
+
+#[cfg(test)]
+mod mutation_closeout;
+
 pub use bundle::{open, open_bytes, seal, seal_bytes, Entry, Opened};
 pub use local_bundle::{open_profile_into_slot, seal_profile_in_slot};
 pub use catalog::{

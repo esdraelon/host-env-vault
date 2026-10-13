@@ -94,6 +94,51 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
 }
 
 #[test]
+fn render_refuses_bundle_profile_mismatch() {
+    let root = temp_root("profile-mismatch");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let state_dir = root.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    write_catalog_snapshot(
+        &state_dir,
+        r#"{"profiles":[
+          {"name":"denarius-web","inject":["DB_PASS"],"runtime":[]},
+          {"name":"denarius-worker","inject":["DB_PASS"],"runtime":["APP_KEY"]}
+        ]}"#,
+    )
+    .unwrap();
+    let kek = AgeKek::generate();
+    let bundle = crate::bundle::seal_bytes(
+        "denarius-web",
+        vec![crate::bundle::Entry {
+            name: "DB_PASS".into(),
+            kind: Kind::Env,
+            bytes: zeroize::Zeroizing::new(b"secret".to_vec()),
+        }],
+        &kek,
+    )
+    .unwrap();
+    fs::write(
+        crate::sync::bundle_path(&state_dir, "denarius-worker"),
+        bundle,
+    )
+    .unwrap();
+    let dest = root.join("dest");
+    let mut table = SlotTable::new();
+    assert!(matches!(
+        render_from_vault(
+            &kek,
+            &mut table,
+            "denarius-worker",
+            &RenderOptions::new(root.join("kek.age"), state_dir, dest, None),
+        ),
+        Err(Error::ProfileMismatch { .. })
+    ));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn render_refuses_dirty_destination() {
     let root = temp_root("dirty-dest");
     let _ = fs::remove_dir_all(&root);

@@ -1,45 +1,14 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use serial_test::serial;
 
 use crate::catalog::write_catalog_snapshot;
 use crate::kek::AgeKek;
+use crate::log_test_capture::capture_info_logs;
 use crate::port::MemorySsm;
 use crate::profile::Kind;
 use crate::render_cmd::{render_from_vault, RenderOptions};
 use crate::slot::SlotTable;
 use crate::sync::sync_catalog_from_text;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
-
-fn capture_logs<F: FnOnce()>(test: F) -> String {
-    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let sink = lines.clone();
-    let layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .without_time()
-        .with_target(true)
-        .with_writer(move || LogWriter(sink.clone()))
-        .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-    let _guard = tracing_subscriber::registry().with(layer).set_default();
-    test();
-    let joined = lines.lock().unwrap().concat();
-    joined
-}
-
-struct LogWriter(Arc<Mutex<Vec<String>>>);
-
-impl std::io::Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap()
-            .push(String::from_utf8_lossy(buf).to_string());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 const WORKER: &str = r#"{"profiles":[{"name":"denarius-worker","inject":["DB_PASS"],"runtime":["APP_KEY"],"inject_files":[],"runtime_files":[]}]}"#;
 
@@ -53,6 +22,7 @@ fn temp_dir(label: &str) -> PathBuf {
     ))
 }
 
+#[serial]
 #[test]
 fn log_render_skips_runtime_entries_and_writes_destination() {
     let root = temp_dir("runtime-skip");
@@ -68,7 +38,7 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
     let mut table = SlotTable::new();
     sync_catalog_from_text(WORKER, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
 
-    let text = capture_logs(|| {
+    let text = capture_info_logs(|| {
         render_from_vault(
             &kek,
             &mut table,
@@ -88,6 +58,7 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[serial]
 #[test]
 fn log_render_refuses_unknown_profile() {
     let root = temp_dir("unknown-profile");
@@ -101,7 +72,7 @@ fn log_render_refuses_unknown_profile() {
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
 
-    let text = capture_logs(|| {
+    let text = capture_info_logs(|| {
         let _ = render_from_vault(
             &kek,
             &mut table,
@@ -116,6 +87,7 @@ fn log_render_refuses_unknown_profile() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[serial]
 #[test]
 fn log_render_does_not_skip_when_all_entries_are_inject() {
     let root = temp_dir("inject-only");
@@ -139,7 +111,7 @@ fn log_render_does_not_skip_when_all_entries_are_inject() {
     std::fs::write(crate::sync::bundle_path(&state_dir, "p"), bundle).unwrap();
     let mut table = SlotTable::new();
 
-    let text = capture_logs(|| {
+    let text = capture_info_logs(|| {
         render_from_vault(
             &kek,
             &mut table,
@@ -155,6 +127,7 @@ fn log_render_does_not_skip_when_all_entries_are_inject() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[serial]
 #[test]
 fn log_local_bundle_open_during_render() {
     let root = temp_dir("open-slot");
@@ -178,7 +151,7 @@ fn log_local_bundle_open_during_render() {
     std::fs::write(crate::sync::bundle_path(&state_dir, "p"), bundle).unwrap();
     let mut table = SlotTable::new();
 
-    let text = capture_logs(|| {
+    let text = capture_info_logs(|| {
         render_from_vault(
             &kek,
             &mut table,
