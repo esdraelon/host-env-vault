@@ -13,6 +13,7 @@ pub mod documents;
 pub mod local_bundle;
 pub mod error;
 pub mod fetch_documents_cmd;
+pub mod hydrate_cmd;
 pub mod kek;
 pub mod port;
 pub mod profile;
@@ -36,7 +37,11 @@ pub use documents::{
     document_slot_name, is_secret_shaped_s3_key, load_documents_into_slot, pull_profile_documents,
     seal_entries_from_documents, PulledDocument,
 };
-pub use port::{MemoryS3, MemorySsm, S3Port, SsmPort};
+pub use hydrate_cmd::{
+    hydrate_gh_from_vault, hydrate_gh_with_catalog, HydrateGhOptions, GITHUB_PROFILE,
+    HYDRATE_SLOT_INDEX,
+};
+pub use port::{GhError, GhPort, MemoryGh, MemoryS3, MemorySsm, S3Port, SsmPort};
 pub use profile::{Kind, ProfileId};
 pub use render::{read_staging, render, RenderMode};
 pub use render_cmd::{

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use clap::{Parser, Subcommand};
-use host_env_vault::port::{S3Error, S3Port, SsmError, SsmPort};
+use host_env_vault::port::{GhError, GhPort, S3Error, S3Port, SsmError, SsmPort};
 use host_env_vault::{AgeKek, ProfileId};
 
 mod aws_s3 {
@@ -49,6 +49,54 @@ mod aws_s3 {
                     }
                 }
             })
+        }
+    }
+}
+
+mod process_gh {
+    use super::{GhError, GhPort};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct ProcessGh;
+
+    impl GhPort for ProcessGh {
+        fn auth_login_with_token(&self, token: &[u8]) -> Result<(), GhError> {
+            let mut child = Command::new("gh")
+                .args(["auth", "login", "--hostname", "github.com", "--with-token"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|_| GhError::Unavailable)?;
+            {
+                let stdin = child.stdin.as_mut().ok_or(GhError::Unavailable)?;
+                stdin.write_all(token).map_err(|_| GhError::Unavailable)?;
+                if !token.ends_with(b"\n") {
+                    stdin.write_all(b"\n").map_err(|_| GhError::Unavailable)?;
+                }
+            }
+            let status = child.wait().map_err(|_| GhError::Unavailable)?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(GhError::LoginFailed)
+            }
+        }
+
+        fn auth_switch_user(&self, username: &str) -> Result<(), GhError> {
+            let status = Command::new("gh")
+                .args(["auth", "switch", "--user", username])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|_| GhError::Unavailable)?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(GhError::SwitchFailed)
+            }
         }
     }
 }
@@ -181,6 +229,22 @@ enum Command {
         #[arg(long)]
         runtime_dir: PathBuf,
     },
+    /// Load local vault material into external tools.
+    Hydrate {
+        #[command(subcommand)]
+        target: HydrateTarget,
+    },
+}
+
+#[derive(Subcommand)]
+enum HydrateTarget {
+    /// Feed GitHub tokens from the `github` profile bundle into `gh auth`.
+    Gh {
+        #[arg(long)]
+        identity: PathBuf,
+        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
+        state_dir: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -307,6 +371,19 @@ fn run() -> Result<(), host_env_vault::Error> {
             );
             host_env_vault::serve_profile_forever(listener, &kek, &mut table, catalog, &options)?;
         }
+        Command::Hydrate { target } => match target {
+            HydrateTarget::Gh {
+                identity,
+                state_dir,
+            } => {
+                let kek = AgeKek::read_identity(&identity)?;
+                let mut table = host_env_vault::slot::SlotTable::new();
+                let options = host_env_vault::HydrateGhOptions::new(identity, state_dir.clone());
+                let gh = process_gh::ProcessGh;
+                host_env_vault::hydrate_gh_from_vault(&gh, &kek, &mut table, &options)?;
+                eprintln!("hydrated gh from {}", state_dir.display());
+            }
+        },
     }
     Ok(())
 }

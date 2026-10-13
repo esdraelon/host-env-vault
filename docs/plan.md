@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M8
+Resume from: M9
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -205,7 +205,15 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Log-tested decision branches (separate `documents::log_tests` and `fetch_documents_cmd::log_tests` modules): documents reject oversize s3 object, documents reject secret-shaped s3 key, documents loaded s3 object, fetch documents refuse profile not in catalog.
 - [`S3Port`](src/port/s3.rs) + [`MemoryS3`](src/port/s3.rs); catalog `documents` keys (including `nginx/*.conf`) load into document slots; secret-shaped keys and bodies over 100 KB refused; [`sync_from_ports`](src/sync/mod.rs) optional S3 prefix during sync; CLI `fetch-documents` and sync `--s3-bucket` / `--s3-prefix` hooks.
 
-- [ ] **M8** `stack/m08-hydrate-gh` — GitHub hydrate. Feed each token slot to `gh auth login --with-token`, then switch the active user. Integration test with a fake `gh` that records stdin and the switch user.
+- [x] **M8** `stack/m08-hydrate-gh` — GitHub hydrate. Feed each token slot to `gh auth login --with-token`, then switch the active user. Integration test with a fake `gh` that records stdin and the switch user.
+
+### M8 completion
+
+- Branch: `stack/m08-hydrate-gh`
+- Commit: `c6112a5`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08 cargo test` (194 tests, full suite) — passed; line coverage **95.41%** on `src/` (`cargo llvm-cov --lib`, dedicated `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08-cov`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m08-mutants cargo mutants --file src/port/gh.rs --file 'src/hydrate_cmd/*.rs'` — **15/15 caught (100%)** on M8 scope (3 unviable).
+- Log-tested decision branches (separate `hydrate_cmd::log_tests` module): hydrate refuse profile not in catalog, hydrate refuse missing github active user, hydrate gh logged in account, hydrate gh switched active user.
+- [`GhPort`](src/port/gh.rs) + [`MemoryGh`](src/port/gh.rs); `hydrate gh` CLI opens local `github.hev` through hydrate slot 3, feeds each catalog runtime token to `gh auth login --with-token`, then `gh auth switch --user` from `github_active_user`; production [`ProcessGh`](src/main.rs) wraps the real CLI.
 - [ ] **M9** `stack/m09-mutation` — Mutation closeout. `cargo-mutants` at 80% across the crate. The mutations that must be caught are the bounds checks, the wipe, the generation, the profile mismatch, the lease expiry, and the keep-the-last-bundle path. Fill any gaps the earlier milestones left.
 
 ## Later
