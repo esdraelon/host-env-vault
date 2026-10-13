@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::catalog::parse::{parse_catalog_text, Catalog};
-use crate::error::Error;
+use crate::core::error::Error;
 
 /// Filename under `state_dir` for the last synced catalog document.
 pub const CATALOG_SNAPSHOT_FILE: &str = "catalog.json";
@@ -53,7 +53,8 @@ mod tests {
     use super::*;
     use crate::catalog::DEFAULT_CATALOG_PARAMETER;
 
-    const SAMPLE: &str = r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+    const SAMPLE: &str =
+        r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#;
 
     fn temp_dir(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,10 +71,7 @@ mod tests {
         let dir = temp_dir("round-trip");
         let _ = std::fs::remove_dir_all(&dir);
         write_catalog_snapshot(&dir, SAMPLE).unwrap();
-        assert_eq!(
-            catalog_snapshot_path(&dir),
-            dir.join(CATALOG_SNAPSHOT_FILE)
-        );
+        assert_eq!(catalog_snapshot_path(&dir), dir.join(CATALOG_SNAPSHOT_FILE));
         let catalog = load_catalog_snapshot(&dir).unwrap();
         assert!(catalog.profile("denarius-web").is_some());
         let _ = std::fs::remove_dir_all(&dir);
@@ -84,7 +82,7 @@ mod tests {
         let dir = temp_dir("missing");
         let _ = std::fs::remove_dir_all(&dir);
         match load_catalog_snapshot(&dir) {
-            Err(crate::error::Error::CatalogParse(message)) => {
+            Err(crate::core::error::Error::CatalogParse(message)) => {
                 assert!(message.contains("run sync first"));
             }
             other => panic!("expected catalog parse hint, got {other:?}"),

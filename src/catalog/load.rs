@@ -1,14 +1,11 @@
 use crate::catalog::parse::{parse_catalog_text, Catalog, ProfileDefinition};
 use crate::catalog::DEFAULT_CATALOG_PARAMETER;
-use crate::error::Error;
-use crate::port::ssm::{SsmError, SsmPort};
-use crate::slot::{Slot, SlotError, SlotLease};
+use crate::core::error::Error;
+use crate::core::slot::{Slot, SlotError, SlotLease};
+use crate::ports::ssm::{SsmError, SsmPort};
 
 /// Fetch and parse the catalog parameter from SSM.
-pub fn load_catalog_from_ssm(
-    ssm: &dyn SsmPort,
-    parameter_name: &str,
-) -> Result<Catalog, Error> {
+pub fn load_catalog_from_ssm(ssm: &dyn SsmPort, parameter_name: &str) -> Result<Catalog, Error> {
     let text = ssm.get_parameter(parameter_name).map_err(map_ssm)?;
     parse_catalog_text(&text)
 }
@@ -52,8 +49,8 @@ pub fn load_default_catalog(ssm: &dyn SsmPort) -> Result<Catalog, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::ssm::MemorySsm;
-    use crate::slot::SlotTable;
+    use crate::core::slot::SlotTable;
+    use crate::ports::ssm::MemorySsm;
     use std::time::Instant;
 
     const SAMPLE: &str = r#"{

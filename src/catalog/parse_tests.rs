@@ -1,6 +1,6 @@
 use super::parse::{parse_catalog_text, valid_s3_document_key, Catalog, ProfileDefinition};
-use crate::error::Error;
-use crate::profile::Kind;
+use crate::core::error::Error;
+use crate::legacy::profile::Kind;
 
 #[test]
 fn empty_document_is_rejected() {

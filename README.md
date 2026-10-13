@@ -1,6 +1,6 @@
 # host-env-vault
 
-Spike of the host agent for Denarius and the Amtgard IDP. The implementation plan is [docs/plan.md](docs/plan.md). This README describes the spike, which still has hardcoded profiles and heap buffers.
+Spike of the host agent for Denarius and the Amtgard IDP. The implementation plan is [docs/plan.md](docs/plan.md). Source layout is [docs/architecture.md](docs/architecture.md).
 
 It is a unix service. It has no TCP listener and no web UI.
 

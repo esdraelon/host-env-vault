@@ -2,10 +2,10 @@ use super::{
     bind_catalog_profile, load_catalog_from_ssm, parse_catalog_text, validate_seal_entries,
     validate_serve_entry, SealEntry, DEFAULT_CATALOG_PARAMETER,
 };
-use crate::error::Error;
-use crate::port::ssm::{MemorySsm, SsmError, SsmPort};
-use crate::profile::Kind;
-use crate::slot::SlotTable;
+use crate::core::error::Error;
+use crate::core::slot::SlotTable;
+use crate::legacy::profile::Kind;
+use crate::ports::ssm::{MemorySsm, SsmError, SsmPort};
 use std::time::Instant;
 
 const WORKER_CATALOG: &str = r#"{
@@ -48,20 +48,8 @@ fn unknown_profile_is_refused_on_seal() {
 #[test]
 fn entry_outside_runtime_list_is_refused_on_serve() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
-    assert!(validate_serve_entry(
-        &catalog,
-        "denarius-worker",
-        Kind::Env,
-        "DB_PASS"
-    )
-    .is_err());
-    assert!(validate_serve_entry(
-        &catalog,
-        "denarius-worker",
-        Kind::Env,
-        "APP_KEY"
-    )
-    .is_ok());
+    assert!(validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "DB_PASS").is_err());
+    assert!(validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "APP_KEY").is_ok());
 }
 
 #[test]
@@ -203,10 +191,7 @@ fn catalog_lists_env_and_file_slices_from_parse() {
     let names: Vec<_> = catalog.profile_names().collect();
     assert_eq!(names, vec!["denarius-worker"]);
     let worker = catalog.profile("denarius-worker").unwrap();
-    assert_eq!(
-        worker.inject_env(),
-        &["DB_PASS", "STRIPE_WEBHOOK_SECRET"]
-    );
+    assert_eq!(worker.inject_env(), &["DB_PASS", "STRIPE_WEBHOOK_SECRET"]);
     assert_eq!(worker.runtime_env(), &["APP_KEY", "STRIPE_SECRET_KEY"]);
     assert!(worker.inject_files().is_empty());
     assert_eq!(worker.runtime_files(), &["teller.key"]);

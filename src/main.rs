@@ -1,154 +1,15 @@
+mod adapters;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
-use host_env_vault::port::{GhError, GhPort, S3Error, S3Port, SsmError, SsmPort};
-use host_env_vault::{AgeKek, ProfileId};
+use host_env_vault::ports::{S3Error, SsmError};
+use host_env_vault::{AgeKek, ProfileId, SlotTable};
 
-mod aws_s3 {
-    use super::{S3Error, S3Port};
-    use aws_sdk_s3::error::ProvideErrorMetadata;
-
-    pub struct AwsS3 {
-        client: aws_sdk_s3::Client,
-        bucket: String,
-        rt: tokio::runtime::Runtime,
-    }
-
-    impl AwsS3 {
-        pub fn from_env(bucket: String) -> Result<Self, S3Error> {
-            let rt = tokio::runtime::Runtime::new().map_err(|_| S3Error::Unavailable)?;
-            let client = rt.block_on(async {
-                let config = aws_config::load_from_env().await;
-                aws_sdk_s3::Client::new(&config)
-            });
-            Ok(Self { client, bucket, rt })
-        }
-    }
-
-    impl S3Port for AwsS3 {
-        fn get_object(&self, key: &str) -> Result<Vec<u8>, S3Error> {
-            self.rt.block_on(async {
-                let response = self
-                    .client
-                    .get_object()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .send()
-                    .await;
-                match response {
-                    Ok(output) => {
-                        let bytes = output.body.collect().await.map_err(|_| S3Error::Unavailable)?;
-                        Ok(bytes.into_bytes().to_vec())
-                    }
-                    Err(err) => {
-                        if err.code() == Some("NoSuchKey") {
-                            Err(S3Error::NotFound(key.to_owned()))
-                        } else {
-                            Err(S3Error::Unavailable)
-                        }
-                    }
-                }
-            })
-        }
-    }
-}
-
-mod process_gh {
-    use super::{GhError, GhPort};
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    #[derive(Debug, Default, Clone, Copy)]
-    pub struct ProcessGh;
-
-    impl GhPort for ProcessGh {
-        fn auth_login_with_token(&self, token: &[u8]) -> Result<(), GhError> {
-            let mut child = Command::new("gh")
-                .args(["auth", "login", "--hostname", "github.com", "--with-token"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|_| GhError::Unavailable)?;
-            {
-                let stdin = child.stdin.as_mut().ok_or(GhError::Unavailable)?;
-                stdin.write_all(token).map_err(|_| GhError::Unavailable)?;
-                if !token.ends_with(b"\n") {
-                    stdin.write_all(b"\n").map_err(|_| GhError::Unavailable)?;
-                }
-            }
-            let status = child.wait().map_err(|_| GhError::Unavailable)?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(GhError::LoginFailed)
-            }
-        }
-
-        fn auth_switch_user(&self, username: &str) -> Result<(), GhError> {
-            let status = Command::new("gh")
-                .args(["auth", "switch", "--user", username])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map_err(|_| GhError::Unavailable)?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(GhError::SwitchFailed)
-            }
-        }
-    }
-}
-
-mod aws_ssm {
-    use super::{SsmError, SsmPort};
-    use aws_sdk_ssm::error::ProvideErrorMetadata;
-
-    pub struct AwsSsm {
-        client: aws_sdk_ssm::Client,
-        rt: tokio::runtime::Runtime,
-    }
-
-    impl AwsSsm {
-        pub fn from_env() -> Result<Self, SsmError> {
-            let rt = tokio::runtime::Runtime::new().map_err(|_| SsmError::Unavailable)?;
-            let client = rt.block_on(async {
-                let config = aws_config::load_from_env().await;
-                aws_sdk_ssm::Client::new(&config)
-            });
-            Ok(Self { client, rt })
-        }
-    }
-
-    impl SsmPort for AwsSsm {
-        fn get_parameter(&self, name: &str) -> Result<String, SsmError> {
-            self.rt.block_on(async {
-                let response = self
-                    .client
-                    .get_parameter()
-                    .name(name)
-                    .with_decryption(true)
-                    .send()
-                    .await;
-                match response {
-                    Ok(output) => output
-                        .parameter()
-                        .and_then(|parameter| parameter.value())
-                        .map(|value| value.to_owned())
-                        .ok_or_else(|| SsmError::NotFound(name.to_owned())),
-                    Err(err) => {
-                        if err.code() == Some("ParameterNotFound") {
-                            Err(SsmError::NotFound(name.to_owned()))
-                        } else {
-                            Err(SsmError::Unavailable)
-                        }
-                    }
-                }
-            })
-        }
-    }
-}
+use adapters::aws_s3::AwsS3;
+use adapters::aws_ssm::AwsSsm;
+use adapters::process_gh::ProcessGh;
 
 #[derive(Parser)]
 #[command(
@@ -167,7 +28,7 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Seal a staging directory into a profile bundle.
+    /// Seal a staging directory into a profile bundle (legacy enum profile).
     Seal {
         #[arg(long)]
         profile: String,
@@ -188,7 +49,6 @@ enum Command {
         state_dir: PathBuf,
         #[arg(long)]
         dest: PathBuf,
-        /// Group that may read the files. Overrides the catalog gid when set.
         #[arg(long)]
         gid: Option<u32>,
     },
@@ -200,10 +60,8 @@ enum Command {
         state_dir: PathBuf,
         #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
         catalog_param: String,
-        /// S3 bucket for catalog document keys (optional).
         #[arg(long)]
         s3_bucket: Option<String>,
-        /// Key prefix inside the bucket for recovery documents.
         #[arg(long)]
         s3_prefix: Option<String>,
     },
@@ -259,7 +117,9 @@ fn main() -> ExitCode {
 
 fn map_cli_s3(err: S3Error) -> host_env_vault::Error {
     match err {
-        S3Error::NotFound(key) => host_env_vault::Error::CatalogParse(format!("s3 object missing: {key}")),
+        S3Error::NotFound(key) => {
+            host_env_vault::Error::CatalogParse(format!("s3 object missing: {key}"))
+        }
         S3Error::Unavailable => host_env_vault::Error::CatalogParse("s3 unavailable".into()),
     }
 }
@@ -267,9 +127,7 @@ fn map_cli_s3(err: S3Error) -> host_env_vault::Error {
 fn map_cli_ssm(err: SsmError) -> host_env_vault::Error {
     match err {
         SsmError::NotFound(name) => host_env_vault::Error::SsmMissing(name),
-        SsmError::Unavailable => {
-            host_env_vault::Error::CatalogParse("ssm unavailable".into())
-        }
+        SsmError::Unavailable => host_env_vault::Error::CatalogParse("ssm unavailable".into()),
     }
 }
 
@@ -307,13 +165,13 @@ fn run() -> Result<(), host_env_vault::Error> {
             s3_prefix,
         } => {
             let kek = host_env_vault::load_or_create_identity(&identity)?;
-            let mut table = host_env_vault::slot::SlotTable::new();
+            let mut table = SlotTable::new();
             let mut options =
                 host_env_vault::SyncOptions::new(identity, state_dir.clone(), catalog_param);
-            let ssm = aws_ssm::AwsSsm::from_env().map_err(map_cli_ssm)?;
+            let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
             if let Some(bucket) = s3_bucket {
                 options = options.with_s3_prefix(s3_prefix.unwrap_or_default());
-                let s3 = aws_s3::AwsS3::from_env(bucket).map_err(map_cli_s3)?;
+                let s3 = AwsS3::from_env(bucket).map_err(map_cli_s3)?;
                 host_env_vault::sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options)?;
             } else {
                 host_env_vault::sync_from_ssm(&ssm, &kek, &mut table, &options)?;
@@ -326,13 +184,13 @@ fn run() -> Result<(), host_env_vault::Error> {
             s3_bucket,
             s3_prefix,
         } => {
-            let mut table = host_env_vault::slot::SlotTable::new();
+            let mut table = SlotTable::new();
             let options = host_env_vault::FetchDocumentsOptions::new(
                 state_dir.clone(),
                 s3_prefix,
                 profile.clone(),
             );
-            let s3 = aws_s3::AwsS3::from_env(s3_bucket).map_err(map_cli_s3)?;
+            let s3 = AwsS3::from_env(s3_bucket).map_err(map_cli_s3)?;
             host_env_vault::fetch_profile_documents(&s3, &mut table, &options)?;
             eprintln!("fetched S3 documents for {profile}");
         }
@@ -344,8 +202,9 @@ fn run() -> Result<(), host_env_vault::Error> {
             gid,
         } => {
             let kek = AgeKek::read_identity(&identity)?;
-            let mut table = host_env_vault::slot::SlotTable::new();
-            let options = host_env_vault::RenderOptions::new(identity, state_dir, dest.clone(), gid);
+            let mut table = SlotTable::new();
+            let options =
+                host_env_vault::RenderOptions::new(identity, state_dir, dest.clone(), gid);
             host_env_vault::render_from_vault(&kek, &mut table, &profile, &options)?;
             eprintln!("rendered {profile} -> {}", dest.display());
         }
@@ -356,7 +215,7 @@ fn run() -> Result<(), host_env_vault::Error> {
             runtime_dir,
         } => {
             let kek = AgeKek::read_identity(&identity)?;
-            let mut table = host_env_vault::slot::SlotTable::new();
+            let mut table = SlotTable::new();
             let options = host_env_vault::ServeOptions::new(
                 identity,
                 state_dir,
@@ -377,10 +236,9 @@ fn run() -> Result<(), host_env_vault::Error> {
                 state_dir,
             } => {
                 let kek = AgeKek::read_identity(&identity)?;
-                let mut table = host_env_vault::slot::SlotTable::new();
+                let mut table = SlotTable::new();
                 let options = host_env_vault::HydrateGhOptions::new(identity, state_dir.clone());
-                let gh = process_gh::ProcessGh;
-                host_env_vault::hydrate_gh_from_vault(&gh, &kek, &mut table, &options)?;
+                host_env_vault::hydrate_gh_from_vault(&ProcessGh, &kek, &mut table, &options)?;
                 eprintln!("hydrated gh from {}", state_dir.display());
             }
         },

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::error::Error;
-use crate::profile::{valid_name, Kind};
+use crate::core::error::Error;
+use crate::legacy::profile::{valid_name, Kind};
 
 /// Full catalog document from the SSM `SecureString` parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,7 +143,9 @@ impl ProfileDefinition {
 
     pub fn allows_seal(&self, kind: Kind, name: &str) -> bool {
         match kind {
-            Kind::Env => name_in_list(&self.inject_env, name) || name_in_list(&self.runtime_env, name),
+            Kind::Env => {
+                name_in_list(&self.inject_env, name) || name_in_list(&self.runtime_env, name)
+            }
             Kind::File => {
                 name_in_list(&self.inject_files, name)
                     || name_in_list(&self.runtime_files, name)
@@ -204,7 +206,10 @@ fn name_in_list(list: &[String], name: &str) -> bool {
 }
 
 fn document_basename(object_key: &str) -> Option<&str> {
-    object_key.rsplit('/').next().filter(|part| !part.is_empty())
+    object_key
+        .rsplit('/')
+        .next()
+        .filter(|part| !part.is_empty())
 }
 
 /// S3 object keys listed in the catalog (may include `/`, e.g. `nginx/site.conf`).
@@ -267,7 +272,11 @@ pub fn parse_catalog_text(text: &str) -> Result<Catalog, Error> {
     } else {
         toml::from_str(trimmed).map_err(log_parse_failure)?
     };
-    let profiles: Result<Vec<_>, _> = doc.profiles.into_iter().map(ProfileDefinition::from_raw).collect();
+    let profiles: Result<Vec<_>, _> = doc
+        .profiles
+        .into_iter()
+        .map(ProfileDefinition::from_raw)
+        .collect();
     Catalog::from_profiles(profiles?)
 }
 

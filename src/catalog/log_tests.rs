@@ -1,7 +1,7 @@
 use super::{parse_catalog_text, validate_seal_entries, validate_serve_entry, SealEntry};
+use crate::legacy::profile::Kind;
+use crate::testing::log_test_capture::capture_info_logs;
 use serial_test::serial;
-use crate::log_test_capture::capture_info_logs;
-use crate::profile::Kind;
 
 #[serial]
 #[test]
@@ -9,10 +9,7 @@ fn log_catalog_parse_failure() {
     let text = capture_info_logs(|| {
         let _ = parse_catalog_text("{ not json");
     });
-    assert!(
-        text.contains("catalog parse failed"),
-        "logs: {text}"
-    );
+    assert!(text.contains("catalog parse failed"), "logs: {text}");
 }
 
 #[serial]
@@ -30,10 +27,7 @@ fn log_catalog_refuse_seal_entry() {
         }];
         let _ = validate_seal_entries(&catalog, "denarius-web", &entries);
     });
-    assert!(
-        text.contains("catalog refuse seal entry"),
-        "logs: {text}"
-    );
+    assert!(text.contains("catalog refuse seal entry"), "logs: {text}");
 }
 
 #[serial]
@@ -59,10 +53,7 @@ fn log_catalog_refuse_serve_entry() {
     let text = capture_info_logs(|| {
         let _ = validate_serve_entry(&catalog, "denarius-worker", Kind::Env, "DB_PASS");
     });
-    assert!(
-        text.contains("catalog refuse serve entry"),
-        "logs: {text}"
-    );
+    assert!(text.contains("catalog refuse serve entry"), "logs: {text}");
 }
 
 const WORKER: &str = r#"{"profiles":[{

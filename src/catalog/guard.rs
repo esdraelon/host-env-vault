@@ -1,8 +1,8 @@
 //! Catalog allowlist checks used by sync/seal and serve.
 
 use crate::catalog::parse::{Catalog, ProfileDefinition};
-use crate::error::Error;
-use crate::profile::{valid_env_value, valid_name, Kind};
+use crate::core::error::Error;
+use crate::legacy::profile::{valid_env_value, valid_name, Kind};
 
 /// One entry candidate for sealing into a local bundle.
 pub struct SealEntry<'a> {
