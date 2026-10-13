@@ -1,8 +1,57 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use clap::{Parser, Subcommand};
-use host_env_vault::port::{SsmError, SsmPort};
+use host_env_vault::port::{S3Error, S3Port, SsmError, SsmPort};
 use host_env_vault::{AgeKek, ProfileId};
+
+mod aws_s3 {
+    use super::{S3Error, S3Port};
+    use aws_sdk_s3::error::ProvideErrorMetadata;
+
+    pub struct AwsS3 {
+        client: aws_sdk_s3::Client,
+        bucket: String,
+        rt: tokio::runtime::Runtime,
+    }
+
+    impl AwsS3 {
+        pub fn from_env(bucket: String) -> Result<Self, S3Error> {
+            let rt = tokio::runtime::Runtime::new().map_err(|_| S3Error::Unavailable)?;
+            let client = rt.block_on(async {
+                let config = aws_config::load_from_env().await;
+                aws_sdk_s3::Client::new(&config)
+            });
+            Ok(Self { client, bucket, rt })
+        }
+    }
+
+    impl S3Port for AwsS3 {
+        fn get_object(&self, key: &str) -> Result<Vec<u8>, S3Error> {
+            self.rt.block_on(async {
+                let response = self
+                    .client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .send()
+                    .await;
+                match response {
+                    Ok(output) => {
+                        let bytes = output.body.collect().await.map_err(|_| S3Error::Unavailable)?;
+                        Ok(bytes.into_bytes().to_vec())
+                    }
+                    Err(err) => {
+                        if err.code() == Some("NoSuchKey") {
+                            Err(S3Error::NotFound(key.to_owned()))
+                        } else {
+                            Err(S3Error::Unavailable)
+                        }
+                    }
+                }
+            })
+        }
+    }
+}
 
 mod aws_ssm {
     use super::{SsmError, SsmPort};
@@ -103,6 +152,23 @@ enum Command {
         state_dir: PathBuf,
         #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
         catalog_param: String,
+        /// S3 bucket for catalog document keys (optional).
+        #[arg(long)]
+        s3_bucket: Option<String>,
+        /// Key prefix inside the bucket for recovery documents.
+        #[arg(long)]
+        s3_prefix: Option<String>,
+    },
+    /// Load one profile's S3 document keys into the sync slot (install hook).
+    FetchDocuments {
+        #[arg(long)]
+        profile: String,
+        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        s3_bucket: String,
+        #[arg(long)]
+        s3_prefix: String,
     },
     /// Serve runtime entries for one catalog profile with a unix socket.
     Serve {
@@ -124,6 +190,13 @@ fn main() -> ExitCode {
             eprintln!("host-env-vault: {err}");
             ExitCode::from(1)
         }
+    }
+}
+
+fn map_cli_s3(err: S3Error) -> host_env_vault::Error {
+    match err {
+        S3Error::NotFound(key) => host_env_vault::Error::CatalogParse(format!("s3 object missing: {key}")),
+        S3Error::Unavailable => host_env_vault::Error::CatalogParse("s3 unavailable".into()),
     }
 }
 
@@ -166,14 +239,38 @@ fn run() -> Result<(), host_env_vault::Error> {
             identity,
             state_dir,
             catalog_param,
+            s3_bucket,
+            s3_prefix,
         } => {
             let kek = host_env_vault::load_or_create_identity(&identity)?;
             let mut table = host_env_vault::slot::SlotTable::new();
-            let options =
+            let mut options =
                 host_env_vault::SyncOptions::new(identity, state_dir.clone(), catalog_param);
             let ssm = aws_ssm::AwsSsm::from_env().map_err(map_cli_ssm)?;
-            host_env_vault::sync_from_ssm(&ssm, &kek, &mut table, &options)?;
+            if let Some(bucket) = s3_bucket {
+                options = options.with_s3_prefix(s3_prefix.unwrap_or_default());
+                let s3 = aws_s3::AwsS3::from_env(bucket).map_err(map_cli_s3)?;
+                host_env_vault::sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options)?;
+            } else {
+                host_env_vault::sync_from_ssm(&ssm, &kek, &mut table, &options)?;
+            }
             eprintln!("synced bundles into {}", state_dir.display());
+        }
+        Command::FetchDocuments {
+            profile,
+            state_dir,
+            s3_bucket,
+            s3_prefix,
+        } => {
+            let mut table = host_env_vault::slot::SlotTable::new();
+            let options = host_env_vault::FetchDocumentsOptions::new(
+                state_dir.clone(),
+                s3_prefix,
+                profile.clone(),
+            );
+            let s3 = aws_s3::AwsS3::from_env(s3_bucket).map_err(map_cli_s3)?;
+            host_env_vault::fetch_profile_documents(&s3, &mut table, &options)?;
+            eprintln!("fetched S3 documents for {profile}");
         }
         Command::Render {
             profile,

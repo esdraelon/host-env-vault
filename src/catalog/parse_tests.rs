@@ -1,4 +1,4 @@
-use super::parse::{parse_catalog_text, Catalog, ProfileDefinition};
+use super::parse::{parse_catalog_text, valid_s3_document_key, Catalog, ProfileDefinition};
 use crate::error::Error;
 use crate::profile::Kind;
 
@@ -47,6 +47,34 @@ fn socket_profile_requires_peer_uid() {
         parse_catalog_text(text),
         Err(Error::CatalogParse(_))
     ));
+}
+
+#[test]
+#[test]
+fn valid_s3_document_key_rejects_traversal() {
+    assert!(!valid_s3_document_key("../x"));
+    assert!(valid_s3_document_key("nginx/site.conf"));
+}
+
+#[test]
+fn invalid_document_s3_key_is_rejected() {
+    let text = r#"{"profiles":[{"name":"nginx","inject":[],"runtime":[],"documents":["../escape.conf"]}]}"#;
+    assert!(matches!(
+        parse_catalog_text(text),
+        Err(Error::CatalogParse(_))
+    ));
+}
+
+#[test]
+fn nginx_document_key_allows_slashes() {
+    let text = r#"{"profiles":[{"name":"nginx","inject":[],"runtime":[],"documents":["nginx/site.conf"]}]}"#;
+    let catalog = parse_catalog_text(text).unwrap();
+    let nginx = catalog.profile("nginx").unwrap();
+    assert!(nginx.allows_document_slot("site.conf"));
+    assert!(nginx.allows_seal(Kind::File, "site.conf"));
+    assert!(!nginx.allows_document_slot("other.conf"));
+    assert!(!nginx.allows_seal(Kind::File, "other.conf"));
+    assert!(!nginx.allows_seal(Kind::Env, "site.conf"));
 }
 
 #[test]

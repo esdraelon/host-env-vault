@@ -435,6 +435,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                s3_prefix: None,
             },
         )
         .unwrap();
@@ -492,6 +493,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                s3_prefix: None,
             },
         )
         .unwrap();
@@ -600,6 +602,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                s3_prefix: None,
             },
         )
         .unwrap();

@@ -9,8 +9,10 @@ compile_error!("host-env-vault is a unix host agent");
 
 pub mod bundle;
 pub mod catalog;
+pub mod documents;
 pub mod local_bundle;
 pub mod error;
+pub mod fetch_documents_cmd;
 pub mod kek;
 pub mod port;
 pub mod profile;
@@ -30,7 +32,11 @@ pub use catalog::{
 };
 pub use error::Error;
 pub use kek::AgeKek;
-pub use port::{MemorySsm, SsmPort};
+pub use documents::{
+    document_slot_name, is_secret_shaped_s3_key, load_documents_into_slot, pull_profile_documents,
+    seal_entries_from_documents, PulledDocument,
+};
+pub use port::{MemoryS3, MemorySsm, S3Port, SsmPort};
 pub use profile::{Kind, ProfileId};
 pub use render::{read_staging, render, RenderMode};
 pub use render_cmd::{
@@ -39,7 +45,8 @@ pub use render_cmd::{
 pub use serve_cmd::{
     bind_serve_socket, fetch_runtime_entry, serve_profile_forever, ServeOptions, SERVE_SLOT_INDEX,
 };
+pub use fetch_documents_cmd::{fetch_profile_documents, FetchDocumentsOptions};
 pub use sync::{
-    bundle_path, load_or_create_identity, ssm_entry_parameter, sync_from_ssm, SyncOptions,
-    DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
+    bundle_path, load_or_create_identity, ssm_entry_parameter, sync_from_ports, sync_from_ssm,
+    SyncOptions, DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
 };

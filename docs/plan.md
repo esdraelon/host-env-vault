@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: M7
+Resume from: M8
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 
@@ -195,7 +195,16 @@ CARGO_TARGET_DIR=/tmp/host-env-vault-target-m01 cargo llvm-cov --lib --summary-o
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m06 cargo test` (158 tests, full suite) — passed; line coverage **95.38%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m06-mutants cargo mutants --file 'src/serve_cmd/*.rs' --file src/serve.rs` — **48/59 caught (81.4%)** on M6 scope (19 unviable, 11 missed).
 - Log-tested decision branches (separate `serve_cmd::log_tests` module): serve deny runtime entry (catalog refuse inject name), serve returned runtime entry, serve refuse profile without socket, serve deny peer uid.
 - Refactored spike `serve.rs` to entry-name frames and wire I/O; new `serve_cmd` opens local `.hev` bundles through serve slot 2 under the 2000 ms lease with idle sweep, catalog `require_uid`, and `poll_serve_once` for tests. CLI `serve` takes `--profile` and uses catalog peer uid (no SSM at serve time).
-- [ ] **M7** `stack/m07-s3-documents` — S3 port. Fill document slots, including nginx site files. Integration test with a fake S3: a file over 100 KB is rejected, and a secret-shaped object is not accepted on this port.
+- [x] **M7** `stack/m07-s3-documents` — S3 port. Fill document slots, including nginx site files. Integration test with a fake S3: a file over 100 KB is rejected, and a secret-shaped object is not accepted on this port.
+
+### M7 completion
+
+- Branch: `stack/m07-s3-documents`
+- Commit: `68809de472e0a0ba20114306e17eb7fea2cfc4e4`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m07 cargo test` (182 tests, full suite) — passed; line coverage **95.41%** on `src/` (`cargo llvm-cov --lib`, dedicated `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m07-cov`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m07-mutants cargo mutants --file 'src/port/s3.rs' --file 'src/documents/mod.rs' --file 'src/fetch_documents_cmd/mod.rs' --file 'src/sync/mod.rs' --file 'src/catalog/parse.rs'` — **116/118 caught (98.3%)** on M7 scope (8 unviable, 2 missed: `is_secret_shaped_s3_key` guard mutations).
+- Log-tested decision branches (separate `documents::log_tests` and `fetch_documents_cmd::log_tests` modules): documents reject oversize s3 object, documents reject secret-shaped s3 key, documents loaded s3 object, fetch documents refuse profile not in catalog.
+- [`S3Port`](src/port/s3.rs) + [`MemoryS3`](src/port/s3.rs); catalog `documents` keys (including `nginx/*.conf`) load into document slots; secret-shaped keys and bodies over 100 KB refused; [`sync_from_ports`](src/sync/mod.rs) optional S3 prefix during sync; CLI `fetch-documents` and sync `--s3-bucket` / `--s3-prefix` hooks.
+
 - [ ] **M8** `stack/m08-hydrate-gh` — GitHub hydrate. Feed each token slot to `gh auth login --with-token`, then switch the active user. Integration test with a fake `gh` that records stdin and the switch user.
 - [ ] **M9** `stack/m09-mutation` — Mutation closeout. `cargo-mutants` at 80% across the crate. The mutations that must be caught are the bounds checks, the wipe, the generation, the profile mismatch, the lease expiry, and the keep-the-last-bundle path. Fill any gaps the earlier milestones left.
 

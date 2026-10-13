@@ -78,6 +78,7 @@ fn log_sync_catalog_loaded_and_sealed() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            s3_prefix: None,
         };
         sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     });
@@ -102,6 +103,7 @@ fn log_sync_profile_failed_keeping_bundle() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            s3_prefix: None,
         };
         let _ = sync_from_ssm(&ssm, &kek, &mut table, &options);
     });
@@ -127,6 +129,7 @@ fn log_sync_reject_oversize_parameter() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            s3_prefix: None,
         };
         let _ = sync_from_ssm(&ssm, &kek, &mut table, &options);
     });

@@ -55,6 +55,7 @@ fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
         identity_path: root.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     assert_eq!(

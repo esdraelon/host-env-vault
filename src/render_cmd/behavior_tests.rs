@@ -59,6 +59,7 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
         identity_path: root.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &sync_options).unwrap();
     assert!(state_dir.join("catalog.json").is_file());
@@ -106,7 +107,8 @@ fn render_refuses_dirty_destination() {
     seed_worker_ssm(&ssm);
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
-    sync_catalog_from_text(WORKER_CATALOG, &ssm, &kek, &mut table, &state_dir).unwrap();
+    sync_catalog_from_text(WORKER_CATALOG, &ssm, None, None, &kek, &mut table, &state_dir)
+        .unwrap();
 
     let options = RenderOptions::new(
         root.join("kek.age"),
@@ -150,6 +152,7 @@ fn render_gid_override_applies_group_readable_modes() {
             identity_path: root.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            s3_prefix: None,
         },
     )
     .unwrap();

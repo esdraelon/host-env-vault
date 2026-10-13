@@ -84,6 +84,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             identity_path: root.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            s3_prefix: None,
         },
     )
     .unwrap();

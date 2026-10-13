@@ -5,11 +5,11 @@ use crate::catalog::DEFAULT_CATALOG_PARAMETER;
 use crate::error::Error;
 use crate::kek::AgeKek;
 use crate::catalog::parse_catalog_text;
-use crate::port::{MemorySsm, SsmError, SsmPort};
+use crate::port::{MemoryS3, MemorySsm, SsmError, SsmPort};
 use crate::sync::{load_or_create_identity, sync_catalog_from_text};
 use crate::profile::Kind;
 use crate::slot::{SlotTable, SECRET_MAX_BYTES};
-use crate::sync::{bundle_path, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
+use crate::sync::{bundle_path, sync_from_ports, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
 use zeroize::Zeroizing;
 
 const WEB_CATALOG: &str = r#"{
@@ -63,6 +63,7 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
         identity_path: work.join("kek.age"),
         state_dir: PathBuf::from("."),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     assert!(work.join("denarius-web.hev").is_file());
@@ -82,6 +83,7 @@ fn sync_success_replaces_bundle_on_disk() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     let path = bundle_path(&state_dir, "denarius-web");
@@ -124,6 +126,7 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     assert!(matches!(
         sync_from_ssm(&ssm, &kek, &mut table, &options),
@@ -164,6 +167,7 @@ fn sync_two_profiles_leaves_slot_free_between_and_after() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     assert!(!table.slot_ref(SYNC_SLOT_INDEX).unwrap().in_use());
@@ -204,6 +208,7 @@ fn missing_catalog_parameter_fails_without_writing_bundles() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     assert!(matches!(
         sync_from_ssm(&ssm, &kek, &mut table, &options),
@@ -235,6 +240,7 @@ fn unavailable_catalog_ssm_maps_to_parse_error() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     assert!(matches!(
         sync_from_ssm(&ssm, &kek, &mut table, &options),
@@ -251,7 +257,7 @@ fn sync_catalog_from_text_matches_ssm_catalog_path() {
     ssm.put("/amtgard/denarius-web/DB_PASS", "from-text");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
-    sync_catalog_from_text(WEB_CATALOG, &ssm, &kek, &mut table, &state_dir).unwrap();
+    sync_catalog_from_text(WEB_CATALOG, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
     let bytes = std::fs::read(bundle_path(&state_dir, "denarius-web")).unwrap();
     let opened = open_bytes(&bytes, &kek).unwrap();
     assert_eq!(&*opened.entries[0].bytes, b"from-text");
@@ -272,6 +278,7 @@ fn max_length_ssm_value_is_accepted() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     let opened = open_bytes(
@@ -305,6 +312,7 @@ fn file_entries_skip_env_line_validation() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     let _ = std::fs::remove_dir_all(&state_dir);
@@ -319,7 +327,7 @@ fn sync_catalog_from_text_counts_profile_failures() {
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     assert!(matches!(
-        sync_catalog_from_text(TWO_PROFILE_CATALOG, &ssm, &kek, &mut table, &state_dir),
+        sync_catalog_from_text(TWO_PROFILE_CATALOG, &ssm, None, None, &kek, &mut table, &state_dir),
         Err(Error::SyncFailed { count: 1 })
     ));
     assert!(bundle_path(&state_dir, "denarius-web").exists());
@@ -340,11 +348,48 @@ fn invalid_env_value_from_ssm_is_rejected() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     assert!(matches!(
         sync_from_ssm(&ssm, &kek, &mut table, &options),
         Err(Error::SyncFailed { count: 1 })
     ));
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+const NGINX_DOC_CATALOG: &str = r#"{
+  "profiles": [{
+    "name": "nginx",
+    "inject": [],
+    "runtime": [],
+    "documents": ["nginx/amtgard.conf"]
+  }]
+}"#;
+
+#[test]
+fn sync_seals_nginx_documents_from_fake_s3() {
+    let state_dir = temp_state_dir("nginx-s3");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    let ssm = MemorySsm::new();
+    ssm.put(DEFAULT_CATALOG_PARAMETER, NGINX_DOC_CATALOG);
+    let s3 = MemoryS3::new();
+    s3.put("recovery/nginx/amtgard.conf", b"server { listen 443; }");
+    let kek = AgeKek::generate();
+    let mut table = SlotTable::new();
+    let options = SyncOptions {
+        identity_path: state_dir.join("kek.age"),
+        state_dir: state_dir.clone(),
+        catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: Some("recovery".into()),
+    };
+    sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options).unwrap();
+    let path = bundle_path(&state_dir, "nginx");
+    let bytes = std::fs::read(&path).unwrap();
+    let opened = open_bytes(&bytes, &kek).unwrap();
+    assert_eq!(opened.profile, "nginx");
+    assert_eq!(opened.entries.len(), 1);
+    assert_eq!(opened.entries[0].name, "amtgard.conf");
+    assert_eq!(&*opened.entries[0].bytes, b"server { listen 443; }");
     let _ = std::fs::remove_dir_all(&state_dir);
 }
 
@@ -360,6 +405,7 @@ fn atomic_replace_does_not_leave_tmp_when_rename_succeeds() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     assert!(!state_dir.join("denarius-web.hev.tmp").exists());

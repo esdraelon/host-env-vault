@@ -66,7 +66,7 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
     ssm.put("/amtgard/denarius-worker/APP_KEY", "key");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
-    sync_catalog_from_text(WORKER, &ssm, &kek, &mut table, &state_dir).unwrap();
+    sync_catalog_from_text(WORKER, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
 
     let text = capture_logs(|| {
         render_from_vault(

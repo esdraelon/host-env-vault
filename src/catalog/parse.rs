@@ -131,11 +131,23 @@ impl ProfileDefinition {
         &self.runtime_files
     }
 
+    pub fn document_keys(&self) -> &[String] {
+        &self.documents
+    }
+
+    pub fn allows_document_slot(&self, slot_name: &str) -> bool {
+        self.documents
+            .iter()
+            .any(|key| document_basename(key).is_some_and(|base| base == slot_name))
+    }
+
     pub fn allows_seal(&self, kind: Kind, name: &str) -> bool {
         match kind {
             Kind::Env => name_in_list(&self.inject_env, name) || name_in_list(&self.runtime_env, name),
             Kind::File => {
-                name_in_list(&self.inject_files, name) || name_in_list(&self.runtime_files, name)
+                name_in_list(&self.inject_files, name)
+                    || name_in_list(&self.runtime_files, name)
+                    || self.allows_document_slot(name)
             }
         }
     }
@@ -160,7 +172,7 @@ impl ProfileDefinition {
         validate_name_list(&raw.runtime, "runtime")?;
         validate_name_list(&raw.inject_files, "inject_files")?;
         validate_name_list(&raw.runtime_files, "runtime_files")?;
-        validate_name_list(&raw.documents, "documents")?;
+        validate_document_key_list(&raw.documents)?;
         if raw.socket && raw.require_uid.is_none() {
             tracing::info!(
                 target: "host_env_vault::catalog",
@@ -189,6 +201,38 @@ impl ProfileDefinition {
 
 fn name_in_list(list: &[String], name: &str) -> bool {
     list.iter().any(|entry| entry == name)
+}
+
+fn document_basename(object_key: &str) -> Option<&str> {
+    object_key.rsplit('/').next().filter(|part| !part.is_empty())
+}
+
+/// S3 object keys listed in the catalog (may include `/`, e.g. `nginx/site.conf`).
+pub fn valid_s3_document_key(key: &str) -> bool {
+    if key.is_empty() || key.len() > 128 {
+        return false;
+    }
+    if key.starts_with('/') || key.contains("..") {
+        return false;
+    }
+    key.bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_'))
+}
+
+fn validate_document_key_list(keys: &[String]) -> Result<(), Error> {
+    for key in keys {
+        if !valid_s3_document_key(key) {
+            tracing::info!(
+                target: "host_env_vault::catalog",
+                key = %key,
+                "catalog reject invalid document key"
+            );
+            return Err(Error::CatalogParse(format!(
+                "invalid documents key `{key}`"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_name_list(names: &[String], field: &str) -> Result<(), Error> {
