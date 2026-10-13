@@ -41,7 +41,8 @@ pub use application::serve::{
 };
 pub use application::sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter, sync_catalog_from_text,
-    sync_from_ports, sync_from_secret_source, sync_from_ssm, SyncOptions, DEFAULT_STATE_DIR,
+    sync_from_local, sync_from_ports, sync_from_secret_source, sync_from_ssm, SyncOptions,
+    DEFAULT_STATE_DIR,
     SYNC_SLOT_INDEX,
 };
 pub use catalog::{
@@ -56,8 +57,8 @@ pub use core::slot::SlotTable;
 pub use legacy::profile::{Kind, ProfileId};
 pub use legacy::render::{read_staging, render, RenderMode};
 pub use ports::{
-    GhError, GhPort, MemoryGh, MemoryS3, MemorySsm, S3Port, SecretSource, SsmPort,
-    SsmSecretSource,
+    GhError, GhPort, LocalSecretSource, MemoryGh, MemoryS3, MemorySsm, S3Port, SecretSource,
+    SsmPort, SsmSecretSource, LOCAL_CATALOG_FILE,
 };
 pub use vault::bundle::{open, open_bytes, seal, seal_bytes, Entry, Opened};
 pub use vault::kek::AgeKek;

@@ -3,8 +3,8 @@ mod adapters;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
-use host_env_vault::ports::{S3Error, SsmError};
+use clap::{Parser, Subcommand, ValueEnum};
+use host_env_vault::ports::{S3Error, S3Port, SsmError};
 use host_env_vault::{AgeKek, ProfileId, SlotTable};
 
 use adapters::aws_s3::AwsS3;
@@ -52,16 +52,20 @@ enum Command {
         #[arg(long)]
         gid: Option<u32>,
     },
-    /// Pull catalog and secrets from SSM into local sealed bundles.
+    /// Pull catalog and secrets into local sealed bundles (SSM or local dev files).
     Sync {
         #[arg(long)]
         identity: PathBuf,
         #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
         state_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = SyncSource::Ssm)]
+        source: SyncSource,
         #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
         catalog_param: String,
         #[arg(long, default_value = host_env_vault::DEFAULT_SECRETS_PREFIX)]
         secrets_prefix: String,
+        #[arg(long)]
+        local_secrets_dir: Option<PathBuf>,
         #[arg(long)]
         s3_bucket: Option<String>,
         #[arg(long)]
@@ -94,6 +98,14 @@ enum Command {
         #[command(subcommand)]
         target: HydrateTarget,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SyncSource {
+    /// AWS Systems Manager Parameter Store (default).
+    Ssm,
+    /// Local directory with `catalog.json` and `{profile}.env` files.
+    Local,
 }
 
 #[derive(Subcommand)]
@@ -162,8 +174,10 @@ fn run() -> Result<(), host_env_vault::Error> {
         Command::Sync {
             identity,
             state_dir,
+            source,
             catalog_param,
             secrets_prefix,
+            local_secrets_dir,
             s3_bucket,
             s3_prefix,
         } => {
@@ -175,13 +189,32 @@ fn run() -> Result<(), host_env_vault::Error> {
                 catalog_param,
                 secrets_prefix,
             );
-            let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
-            if let Some(bucket) = s3_bucket {
+            let aws_s3 = if let Some(bucket) = s3_bucket {
                 options = options.with_s3_prefix(s3_prefix.unwrap_or_default());
-                let s3 = AwsS3::from_env(bucket).map_err(map_cli_s3)?;
-                host_env_vault::sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options)?;
+                Some(AwsS3::from_env(bucket).map_err(map_cli_s3)?)
             } else {
-                host_env_vault::sync_from_ssm(&ssm, &kek, &mut table, &options)?;
+                None
+            };
+            let s3_port = aws_s3.as_ref().map(|client| client as &dyn S3Port);
+            match source {
+                SyncSource::Ssm => {
+                    let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                    host_env_vault::sync_from_ports(&ssm, s3_port, &kek, &mut table, &options)?;
+                }
+                SyncSource::Local => {
+                    let local_dir = local_secrets_dir.ok_or_else(|| {
+                        host_env_vault::Error::CatalogParse(
+                            "sync --source local requires --local-secrets-dir".into(),
+                        )
+                    })?;
+                    host_env_vault::sync_from_local(
+                        &local_dir,
+                        s3_port,
+                        &kek,
+                        &mut table,
+                        &options,
+                    )?;
+                }
             }
             eprintln!("synced bundles into {}", state_dir.display());
         }

@@ -2,7 +2,7 @@
 
 Secrets for containers, kept on the host—not in git, not in the image, and not in one shared `.env` every service can read.
 
-The agent **syncs** from AWS (or, in a future release, from local dev files), **seals** encrypted bundles on disk, then either **renders** files before start or **serves** them over a unix socket while the app runs.
+The agent **syncs** from AWS SSM or from a local dev directory, **seals** encrypted bundles on disk, then either **renders** files before start or **serves** them over a unix socket while the app runs.
 
 ---
 
@@ -153,9 +153,33 @@ Enable with `systemctl enable --now host-env-vault-serve@app-worker.service`.
 
 Example unit files also live under `packaging/`; adjust profile names and paths to match your host.
 
-### Local development (planned)
+### Local development
 
-Today, sync requires AWS. The [revision plan](docs/revision.md) adds **`sync --source local`** with a directory of `catalog.json` and per-profile `.env` files so laptops can render and serve without SSM. Until that ships, use the in-memory test ports in the crate or a small EC2/SSM sandbox.
+On a laptop you can sync without AWS. Create a directory (for example `./dev-secrets`) with:
+
+```text
+dev-secrets/
+  catalog.json          # same JSON shape as the SSM catalog parameter
+  app-web.env           # KEY=value lines for that profile
+  app-worker.env
+  files/                # optional file entries (see below)
+    teller.key
+```
+
+Per-profile env files are named `{profile}.env`. **Env** catalog entries must appear as `NAME=value` (same rules as rendered `secrets.env`). **File** entries are resolved in order:
+
+1. A line `NAME=@relative/path` in `{profile}.env` (path relative to `dev-secrets/`).
+2. Otherwise `dev-secrets/files/NAME` when that file exists.
+
+```bash
+host-env-vault sync \
+  --source local \
+  --local-secrets-dir ./dev-secrets \
+  --identity ./dev/kek.age \
+  --state-dir ./dev/state
+```
+
+`--source` defaults to `ssm`. Local sync does not call the AWS SDK for catalog or secrets; optional `--s3-bucket` still pulls catalog **documents** from S3 when configured. After sync, `render` and `serve` behave the same as in production (local bundles only).
 
 ---
 

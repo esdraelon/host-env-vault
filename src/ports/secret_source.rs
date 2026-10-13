@@ -1,8 +1,24 @@
 //! **Hexagonal port** for loading catalog text and secret entries from a backend.
-//! Production sync uses [`SsmSecretSource`] over [`SsmPort`](super::ssm::SsmPort); M11 adds local files.
+//! Production sync uses [`SsmSecretSource`] over [`SsmPort`](super::ssm::SsmPort);
+//! [`LocalSecretSource`] reads `catalog.json` and per-profile env files for laptop dev.
+
+use std::path::{Path, PathBuf};
 
 use crate::core::error::Error;
 use crate::ports::ssm::{SsmError, SsmPort};
+
+/// Snapshot file at the root of a local secrets directory.
+pub const LOCAL_CATALOG_FILE: &str = "catalog.json";
+
+/// Basename for profile env files: `{profile}.env`.
+pub fn local_profile_env_basename(profile: &str) -> String {
+    format!("{profile}.env")
+}
+
+/// Optional file payload for a catalog file entry: `{root}/files/{entry_name}`.
+pub fn local_file_entry_path(root: &Path, entry_name: &str) -> PathBuf {
+    root.join("files").join(entry_name)
+}
 
 /// SSM parameter path for one secret entry under a profile.
 pub fn ssm_entry_parameter(
@@ -61,11 +77,95 @@ fn map_ssm(err: SsmError) -> Error {
     }
 }
 
+/// Directory-backed secrets for local development (`catalog.json`, `{profile}.env`, optional `files/`).
+pub struct LocalSecretSource {
+    root: PathBuf,
+}
+
+impl LocalSecretSource {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl SecretSource for LocalSecretSource {
+    fn load_catalog(&self) -> Result<String, Error> {
+        let path = self.root.join(LOCAL_CATALOG_FILE);
+        std::fs::read_to_string(&path).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Error::SsmMissing(path.display().to_string())
+            } else {
+                Error::Io(err)
+            }
+        })
+    }
+
+    fn load_entry(&self, profile: &str, entry: &str) -> Result<String, Error> {
+        load_local_entry(&self.root, profile, entry)
+    }
+}
+
+fn load_local_entry(root: &Path, profile: &str, entry: &str) -> Result<String, Error> {
+    let env_path = root.join(local_profile_env_basename(profile));
+    let env_text = std::fs::read_to_string(&env_path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            Error::SsmMissing(env_path.display().to_string())
+        } else {
+            Error::Io(err)
+        }
+    })?;
+    if let Some(value) = lookup_env_line(&env_text, entry)? {
+        if let Some(relative) = value.strip_prefix('@') {
+            let file_path = root.join(relative);
+            return std::fs::read_to_string(&file_path).map_err(|err| {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    Error::SsmMissing(file_path.display().to_string())
+                } else {
+                    Error::Io(err)
+                }
+            });
+        }
+        return Ok(value);
+    }
+    let file_path = local_file_entry_path(root, entry);
+    if file_path.is_file() {
+        return std::fs::read_to_string(&file_path).map_err(Error::Io);
+    }
+    Err(Error::SsmMissing(format!(
+        "local:{profile}/{entry} (not in {} or {})",
+        env_path.display(),
+        file_path.display()
+    )))
+}
+
+fn lookup_env_line(text: &str, entry: &str) -> Result<Option<String>, Error> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(Error::CatalogParse(format!(
+                "local env line missing '=': {line}"
+            )));
+        };
+        if key.trim() == entry {
+            return Ok(Some(value.to_owned()));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
     use crate::ports::MemorySsm;
+    use std::fs;
 
     const CATALOG: &str = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
 
@@ -103,5 +203,145 @@ mod tests {
             source.load_entry("app-web", "MISSING"),
             Err(Error::SsmMissing(name)) if name.contains("MISSING")
         ));
+    }
+
+    fn temp_local_root(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "hev-local-src-{label}-{}-{id}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn local_secret_source_reads_catalog_and_env_entries() {
+        let root = temp_local_root("env");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        const CATALOG: &str =
+            r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+        fs::write(root.join(LOCAL_CATALOG_FILE), CATALOG).unwrap();
+        fs::write(
+            root.join("app-web.env"),
+            "# comment\nDB_PASS=db-secret\n",
+        )
+        .unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert_eq!(source.load_catalog().unwrap(), CATALOG);
+        assert_eq!(
+            source.load_entry("app-web", "DB_PASS").unwrap(),
+            "db-secret"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_reads_file_from_files_dir() {
+        let root = temp_local_root("files-dir");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("files")).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        fs::write(root.join("app-web.env"), "\n").unwrap();
+        fs::write(root.join("files/teller.key"), "teller-bytes").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert_eq!(
+            source.load_entry("app-web", "teller.key").unwrap(),
+            "teller-bytes"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_reads_file_via_at_path_in_env() {
+        let root = temp_local_root("at-path");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("certs")).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        fs::write(
+            root.join("app-web.env"),
+            "teller.key=@certs/teller.pem\n",
+        )
+        .unwrap();
+        fs::write(root.join("certs/teller.pem"), "pem-bytes").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert_eq!(
+            source.load_entry("app-web", "teller.key").unwrap(),
+            "pem-bytes"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_maps_missing_catalog() {
+        let root = temp_local_root("no-catalog");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert!(matches!(
+            source.load_catalog(),
+            Err(Error::SsmMissing(path)) if path.contains(LOCAL_CATALOG_FILE)
+        ));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_maps_missing_profile_env() {
+        let root = temp_local_root("no-env");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert!(matches!(
+            source.load_entry("app-web", "DB_PASS"),
+            Err(Error::SsmMissing(path)) if path.contains("app-web.env")
+        ));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_maps_missing_at_path_target() {
+        let root = temp_local_root("no-at");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        fs::write(root.join("app-web.env"), "KEY=@missing.pem\n").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert!(matches!(
+            source.load_entry("app-web", "KEY"),
+            Err(Error::SsmMissing(path)) if path.contains("missing.pem")
+        ));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_maps_missing_entry() {
+        let root = temp_local_root("missing");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        fs::write(root.join("app-web.env"), "DB_PASS=ok\n").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert!(matches!(
+            source.load_entry("app-web", "MISSING"),
+            Err(Error::SsmMissing(name)) if name.contains("MISSING")
+        ));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_secret_source_rejects_malformed_env_line() {
+        let root = temp_local_root("bad-line");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
+        fs::write(root.join("app-web.env"), "NOT_A_LINE\n").unwrap();
+        let source = LocalSecretSource::new(&root);
+        assert!(matches!(
+            source.load_entry("app-web", "NOT_A_LINE"),
+            Err(Error::CatalogParse(_))
+        ));
+        let _ = fs::remove_dir_all(&root);
     }
 }

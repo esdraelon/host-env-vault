@@ -85,6 +85,16 @@ host-env-vault sync \
 
 **Acceptance.** Integration test: local dir → sync → render → assert `secrets.env`; serve runtime entry over socket.
 
+- [x] **M11** `stack/m11-sync-local` — Local `SecretSource`, `sync --source local`, integration test.
+
+### M11 completion
+
+- Branch: `stack/m11-sync-local`
+- Commit: `4abeaf7e73cee800782b296faf4efe018fd6debc`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m11 cargo test` — **207** tests passed; `RUST_TEST_THREADS=1 CARGO_TARGET_DIR=/tmp/host-env-vault-target-m11-mutants cargo mutants --file src/ports/secret_source.rs --file src/application/sync/mod.rs` — **49/50 caught (98.0%)** on viable mutants (60 total, 10 unviable; 1 missed: pre-existing `write_bundle_atomically` empty-parent guard).
+- [`LocalSecretSource`](src/ports/secret_source.rs): `catalog.json`, `{profile}.env`, file entries via `files/NAME` or `NAME=@relative/path`; [`sync_from_local`](src/application/sync/mod.rs); CLI `--source ssm|local` (default `ssm`), `--local-secrets-dir`; integration test `local_sync_render_and_serve_without_aws`.
+- File-entry convention documented in README local dev section.
+
 ## M12 — Configuration file
 
 Reduce repeated flags in systemd and dev scripts.

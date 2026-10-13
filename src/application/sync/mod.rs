@@ -15,7 +15,7 @@ use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::{valid_env_value, Kind};
 use crate::ports::s3::S3Port;
-use crate::ports::secret_source::{SecretSource, SsmSecretSource};
+use crate::ports::secret_source::{LocalSecretSource, SecretSource, SsmSecretSource};
 use crate::ports::ssm::SsmPort;
 use crate::vault::kek::AgeKek;
 use crate::vault::local_bundle::seal_profile_in_slot;
@@ -97,6 +97,18 @@ pub fn sync_from_ssm(
     options: &SyncOptions,
 ) -> Result<(), Error> {
     sync_from_ports(ssm, None, kek, table, options)
+}
+
+/// Pull catalog and secrets from a local dev directory (no AWS SSM).
+pub fn sync_from_local(
+    local_secrets_dir: &Path,
+    s3: Option<&dyn S3Port>,
+    kek: &AgeKek,
+    table: &mut SlotTable,
+    options: &SyncOptions,
+) -> Result<(), Error> {
+    let secrets = LocalSecretSource::new(local_secrets_dir);
+    sync_from_secret_source(&secrets, s3, kek, table, options)
 }
 
 /// Pull catalog and secrets from SSM and optional S3 documents into local bundles.
@@ -371,6 +383,9 @@ pub fn sync_catalog_from_text(
 
 #[cfg(test)]
 mod behavior_tests;
+
+#[cfg(test)]
+mod local_integration_tests;
 
 #[cfg(test)]
 mod log_tests;
