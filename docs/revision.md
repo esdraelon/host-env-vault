@@ -1,0 +1,252 @@
+# Revision plan (post–M9)
+
+This document tracks product hardening after the initial milestone stack: operator-friendly docs, local development without AWS, and removing baked-in assumptions from code and tests.
+
+## Goals
+
+1. **Documentation** — README oriented to daily use; language examples for inject and runtime clients.
+2. **Development mode** — Sync secrets from local files (`.env` per profile) instead of SSM, without changing render/serve behavior.
+3. **Configuration-driven** — No org-specific paths, profile names, or CLI integrations in core logic; sensible defaults only.
+4. **systemd installer** — One command to install unit files, enable sync timer, and register runtime `serve` instances.
+5. **Profile setup wizard** — Interactive shell script: ensure the binary is installed, then walk through AWS and the first catalog profile.
+
+## Current state (after path defaults change)
+
+| Item | Status |
+| --- | --- |
+| Catalog default parameter | `/host-env-vault/profiles` |
+| Secret parameter layout | `{secrets_prefix}/{profile}/{entry}`; default prefix `/host-env-vault` |
+| CLI | `sync --catalog-param`, `sync --secrets-prefix` |
+| Render / serve | Read local `.hev` only; no AWS |
+| Legacy | `ProfileId` enum, `seal` staging, `hydrate gh` still present |
+
+## M10 — Secret source port
+
+**Problem.** `application/sync` is tightly coupled to `SsmPort` for catalog and entries. Dev mode and future backends (Vault, 1Password CLI, files) need the same seal pipeline.
+
+**Design.**
+
+```text
+ports/secret_source.rs
+  trait SecretSource {
+    fn load_catalog(&self) -> Result<String, Error>;
+    fn load_entry(&self, profile: &str, entry: &str) -> Result<String, Error>;
+  }
+
+  SsmSecretSource { catalog_param, secrets_prefix, ssm: &dyn SsmPort }
+  LocalSecretSource { root: Path }   // M11
+```
+
+- `sync_from_ports` takes `&dyn SecretSource` (or enum `SyncBackend`) instead of calling `ssm.get_parameter` directly.
+- Catalog snapshot on disk unchanged (`catalog.json`).
+- Unit tests keep `MemorySsm` behind `SsmSecretSource`.
+
+**Acceptance.** All existing sync tests pass; no behavior change for production SSM sync.
+
+## M11 — Development mode (local `.env`)
+
+**Operator story.** On a laptop, create:
+
+```text
+dev-secrets/
+  catalog.json          # same shape as SSM catalog (or symlink)
+  app-web.env           # KEY=value lines + optional file refs (see below)
+  app-worker.env
+```
+
+**CLI.**
+
+```bash
+host-env-vault sync \
+  --source local \
+  --local-secrets-dir ./dev-secrets \
+  --identity ./dev/kek.age \
+  --state-dir ./dev/state
+```
+
+**Semantics.**
+
+- **Catalog** — Read `catalog.json` from `local-secrets-dir` (not SSM). Still write snapshot into `state_dir` so render/serve match production.
+- **Entries** — For each name in the profile lists, read from `app-web.env`:
+  - Env entries: line `NAME=value` (same rules as rendered `secrets.env`).
+  - File entries: either `NAME=@relative/path` pointing to a file under the dir, or a sibling file `files/NAME` (pick one convention in implementation; document in README).
+- **No AWS** — `sync --source local` must not call the SDK.
+- **S3 documents** — Optional `--s3-bucket` unchanged; local dev can skip documents or add plain files under `dev-secrets/files/`.
+
+**Acceptance.** Integration test: local dir → sync → render → assert `secrets.env`; serve runtime entry over socket.
+
+## M12 — Configuration file
+
+Reduce repeated flags in systemd and dev scripts.
+
+```toml
+# /etc/host-env-vault/config.toml (example)
+identity = "/etc/host-env-vault/kek.age"
+state_dir = "/var/lib/host-env-vault"
+runtime_dir = "/run/host-env-vault"
+
+[sync]
+source = "ssm"   # or "local"
+catalog_param = "/host-env-vault/profiles"
+secrets_prefix = "/host-env-vault"
+local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
+# s3_bucket = "..."
+# s3_prefix = "recovery/"
+```
+
+- Precedence: CLI flags override file; file overrides defaults.
+- Single config path via `HOST_ENV_VAULT_CONFIG` or `--config`.
+
+## M13 — Neutral naming in tests and legacy cleanup
+
+- Replace `denarius-*` fixture profile names with `app-web`, `app-worker`, `edge-proxy`.
+- Move `ProfileId` enum and `seal` subcommand to `legacy` only; remove Denarius/IDP references from crate docs and clap `about`.
+- **`hydrate gh`** — Generalize to `hydrate tool` driven by catalog extension (tool name, profile, entry mapping) or move to a separate optional binary so core stays generic.
+
+## M14 — Unit templates
+
+Ship maintained templates under `packaging/systemd/` (not a live install yet):
+
+| Unit | Role |
+| --- | --- |
+| `host-env-vault-sync.service` | Oneshot `sync` |
+| `host-env-vault-sync.timer` | Hourly (or daily) trigger |
+| `host-env-vault-serve@.service` | Template: `serve --profile %i` |
+
+- Units use `EnvironmentFile=-/etc/host-env-vault/env` for `AWS_REGION` and optional static config path once M12 lands.
+- Align `ExecStart` with current CLI (`--profile` on `serve`, all required paths).
+- README daily-driver section references these filenames.
+
+**Acceptance.** Templates pass `systemd-analyze verify` when installed on a Linux host; no behavior change to the Rust binary.
+
+## M15 — systemd service installer
+
+**Deliverable.** `scripts/install-systemd.sh` (or `host-env-vault install systemd` thin wrapper) run as root on the host.
+
+**Behavior.**
+
+1. **Preflight** — Linux + systemd; `host-env-vault` on `PATH` (or `--binary` override); config/env file exists or installer writes defaults under `/etc/host-env-vault/`.
+2. **Install units** — Copy M14 templates into `/etc/systemd/system/`, substitute paths (`identity`, `state_dir`, `runtime_dir`, binary path) from config file or flags.
+3. **Sync timer** — `daemon-reload`, `enable --now host-env-vault-sync.timer` (interval flag: `--on-calendar hourly` default).
+4. **Runtime profiles** — Read local `catalog.json` snapshot or ask for profile names; for each profile with `socket: true`, `enable host-env-vault-serve@<name>.service` (skip already enabled).
+5. **Dry run** — `--dry-run` prints paths and `systemctl` commands without writing.
+6. **Uninstall** — `--uninstall` disables timer and serve instances, removes unit files, reloads daemon.
+
+**Non-goals.** Does not create IAM roles, SSM parameters, or the age identity (wizard or first `sync` does).
+
+**Acceptance.** Documented in README; manual test checklist: fresh VM → install binary → run installer → timer active → optional serve@ starts.
+
+**Depends on.** M14 templates; M12 recommended so installer reads one config file instead of many flags.
+
+## M16 — Profile setup wizard (shell)
+
+**Deliverable.** `scripts/setup-profile.sh` (invoked as `./scripts/setup-profile.sh` or installed as `host-env-vault-setup`).
+
+**Goal.** Operator with **admin AWS credentials** (can `ssm:PutParameter`) gets from zero to “catalog updated, secrets created, first sync succeeded” without hand-editing JSON.
+
+### Phase A — Binary and host layout
+
+1. If `host-env-vault` missing from `PATH`:
+   - Detect `cargo` + source tree (repo root via script location) → `cargo build --release` and `install` to `/usr/local/bin` (or `~/.local/bin` with prompt).
+   - Else print install instructions (release tarball URL when published) and exit non-zero.
+2. Create `/etc/host-env-vault`, `/var/lib/host-env-vault`, `/run/host-env-vault` with safe modes (sudo when needed).
+3. Optional: offer to run M15 installer at the end.
+
+### Phase B — AWS
+
+1. Prompt for `AWS_REGION` / `AWS_DEFAULT_REGION`.
+2. Optional `AWS_PROFILE` (export for subshell commands).
+3. Verify with `aws sts get-caller-identity` (require AWS CLI v2 installed; document dependency).
+4. Prompt for catalog parameter and secrets prefix (defaults from M10 constants).
+5. Show minimal IAM policy snippet for **host** role (GetParameter) vs **operator** role (PutParameter for wizard only).
+
+### Phase C — Profile definition
+
+Interactive prompts (validate against catalog rules: name charset, socket ⇒ `require_uid`):
+
+| Step | Prompt |
+| --- | --- |
+| Profile name | e.g. `app-web` |
+| Delivery | inject only / runtime only / both |
+| Inject env names | comma-separated or loop until empty |
+| Runtime env names | if applicable |
+| File entries | inject and/or runtime file basenames |
+| `require_uid` | if runtime or socket |
+| `gid` | optional, for render modes |
+
+Build JSON fragment; merge into full catalog:
+
+- If catalog parameter **missing** → create new `{"profiles":[…]}`.
+- If **exists** → fetch, parse, append or replace same `name` with confirm.
+
+Use `aws ssm put-parameter` (SecureString) for catalog and each `{prefix}/{profile}/{entry}`.
+
+### Phase D — Secret values
+
+For each entry name, prompt to enter value (hidden read) or **skip** (parameter created empty / placeholder — document that sync fails until filled, or wizard only creates parameters when value provided).
+
+### Phase E — First sync
+
+Run:
+
+```bash
+host-env-vault sync --identity … --state-dir … [--catalog-param …] [--secrets-prefix …]
+```
+
+Report success, bundle paths, and next steps:
+
+- inject → example `render` + compose mount line
+- runtime → socket path + enable `serve@` via M15
+
+**Flags.** `--non-interactive` with env vars or answers file (for CI smoke tests of the script logic only).
+
+**Non-goals.** Not a TUI in Rust; no long-lived daemon; no replacement for SSM rotation workflows.
+
+**Acceptance.**
+
+- Shellcheck-clean script checked into repo.
+- README “Daily driver” links to wizard as recommended first-time path.
+- Test: mock `aws` stub in `scripts/tests/` or documented manual QA checklist (full AWS integration test optional in CI).
+
+**Depends on.** Stable defaults (done); M10+ optional for local-only wizard path (M11: “dev profile” branch in wizard). M12 lets wizard write `/etc/host-env-vault/config.toml` for M15.
+
+## Application examples (README)
+
+Delivered in README section **Using secrets in your app** (Python, PHP, TypeScript):
+
+- **Inject** — Parse `secrets.env` or load a file from `files/`.
+- **Runtime** — Unix socket client with opcodes `1` (env) / `2` (file), 2000 ms lease; handle denied status.
+
+No separate SDK crate until protocol stabilizes; copy-paste helpers are enough for v1.
+
+## Open questions
+
+- Should local dev support **only** `.env` per profile, or also a single merged `.env` with prefixed keys (`APP_WEB__DB_PASS`)?
+- Customer-managed KMS for SSM: document only, or first-class catalog field?
+- Multi-host identity: recovery when `kek.age` is lost (always re-seal from source; document backup policy for identity separately from bundles).
+
+## Suggested branch order
+
+```text
+stack/m10-secret-source-port
+stack/m11-sync-local
+stack/m12-config-file
+stack/m13-neutral-fixtures
+stack/m14-systemd-templates
+stack/m15-systemd-installer
+stack/m16-profile-wizard
+```
+
+Each Rust milestone: implement → `cargo test` → mutation gate on touched modules. M14–M16 are mostly `packaging/` and `scripts/`; gate is shellcheck, template verify, and documented manual QA (no mutation gate on shell).
+
+### Milestone gates (M14–M16)
+
+| Milestone | Gate |
+| --- | --- |
+| M14 | `systemd-analyze verify packaging/systemd/*.service` |
+| M15 | Installer `--dry-run` in CI; checklist on Linux VM |
+| M16 | `shellcheck scripts/setup-profile.sh`; optional stub-`aws` test |
+
+## Relationship to `docs/plan.md`
+
+M0–M9 in `docs/plan.md` are **complete** (core agent). This file is the **stacked continuation** (M10+). When a milestone merges, add a completion block to `docs/plan.md` the same way as M1–M9.

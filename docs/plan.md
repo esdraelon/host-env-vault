@@ -122,7 +122,7 @@ The daemon’s resident work is the hourly sync and the socket poll, using the f
 
 ## Work checklist
 
-Resume from: (none — M0–M9 stack complete)
+Resume from: **M10+** in [revision.md](revision.md) (M0–M9 stack complete). Next stacked branches: secret-source port → local dev sync → config file → neutral fixtures → systemd templates (M14) → systemd installer (M15) → profile setup wizard (M16).
 
 Gates for M1 onward: full `cargo test` (no filter), at least 95% line coverage of the crate, `cargo-mutants` at 80% on that milestone's scope, and a test that asserts the new decision-branch log lines on their own. This is not a Slim app. There is no benchmark gate.
 

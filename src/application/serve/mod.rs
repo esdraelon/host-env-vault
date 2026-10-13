@@ -354,7 +354,7 @@ mod unit_tests {
     use crate::application::sync::DEFAULT_STATE_DIR;
     use crate::application::sync::{bundle_path, sync_from_ssm, SyncOptions};
     use crate::catalog::SealEntry;
-    use crate::catalog::{parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER};
+    use crate::catalog::{parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
     use crate::core::slot::SlotTable;
     use crate::legacy::profile::Kind;
     use crate::legacy::serve::{dispatch_denied, OP_FETCH_ENV, ST_DENIED, ST_OK};
@@ -422,9 +422,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/amtgard/denarius-worker/DB_PASS", "d");
-        ssm.put("/amtgard/denarius-worker/APP_KEY", "k");
-        ssm.put("/amtgard/denarius-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/denarius-worker/teller.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -435,6 +435,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
                 s3_prefix: None,
             },
         )
@@ -480,9 +481,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/amtgard/denarius-worker/DB_PASS", "d");
-        ssm.put("/amtgard/denarius-worker/APP_KEY", "k");
-        ssm.put("/amtgard/denarius-worker/teller.key", "f");
+        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/denarius-worker/teller.key", "f");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -493,6 +494,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
                 s3_prefix: None,
             },
         )
@@ -611,9 +613,9 @@ mod unit_tests {
         std::fs::create_dir_all(&root).unwrap();
         let ssm = MemorySsm::new();
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-        ssm.put("/amtgard/denarius-worker/DB_PASS", "d");
-        ssm.put("/amtgard/denarius-worker/APP_KEY", "k");
-        ssm.put("/amtgard/denarius-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/denarius-worker/DB_PASS", "d");
+        ssm.put("/host-env-vault/denarius-worker/APP_KEY", "k");
+        ssm.put("/host-env-vault/denarius-worker/teller.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -624,6 +626,7 @@ mod unit_tests {
                 identity_path: root.join("k.age"),
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+                secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
                 s3_prefix: None,
             },
         )

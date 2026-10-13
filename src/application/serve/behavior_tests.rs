@@ -9,7 +9,7 @@ use crate::application::serve::{
     read_entry_from_slot, ServeOptions, SERVE_SLOT_INDEX,
 };
 use crate::application::sync::{sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
-use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::error::Error;
 use crate::core::slot::{SlotTable, LEASE_MS};
 use crate::legacy::profile::Kind;
@@ -38,11 +38,11 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn seed_worker_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER_CATALOG);
-    ssm.put("/amtgard/denarius-worker/DB_PASS", "db");
-    ssm.put("/amtgard/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
-    ssm.put("/amtgard/denarius-worker/APP_KEY", "app-key-runtime");
-    ssm.put("/amtgard/denarius-worker/STRIPE_SECRET_KEY", "sk-runtime");
-    ssm.put("/amtgard/denarius-worker/teller.key", "teller-bytes");
+    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
+    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "app-key-runtime");
+    ssm.put("/host-env-vault/denarius-worker/STRIPE_SECRET_KEY", "sk-runtime");
+    ssm.put("/host-env-vault/denarius-worker/teller.key", "teller-bytes");
 }
 
 fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
@@ -55,6 +55,7 @@ fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
         identity_path: root.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();

@@ -163,8 +163,8 @@ fn hydrate_gh_after_sync_does_not_call_ssm() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let ssm = MemorySsm::new();
     ssm.put(crate::catalog::DEFAULT_CATALOG_PARAMETER, GITHUB_CATALOG);
-    ssm.put("/amtgard/github/esdraelon", "gho_esdraelon_token");
-    ssm.put("/amtgard/github/megiddo", "gho_megiddo_token");
+    ssm.put("/host-env-vault/github/esdraelon", "gho_esdraelon_token");
+    ssm.put("/host-env-vault/github/megiddo", "gho_megiddo_token");
     let kek = AgeKek::generate();
     let identity = state_dir.join("kek.age");
     kek.write_identity(&identity).unwrap();
@@ -173,6 +173,7 @@ fn hydrate_gh_after_sync_does_not_call_ssm() {
         identity.clone(),
         state_dir.clone(),
         crate::catalog::DEFAULT_CATALOG_PARAMETER.to_owned(),
+        crate::catalog::DEFAULT_SECRETS_PREFIX.to_owned(),
     );
     sync_from_ssm(&ssm, &kek, &mut table, &sync_options).unwrap();
 

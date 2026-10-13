@@ -1,4 +1,4 @@
-//! Host profile vault for Denarius and the Amtgard IDP.
+//! Host-side profile vault: sync secrets from AWS, seal locally, render or serve per profile.
 //!
 //! Layout:
 //! - [`core`] — errors and fixed-capacity slots
@@ -47,6 +47,7 @@ pub use catalog::{
     bind_catalog_profile, catalog_snapshot_path, load_catalog_from_ssm, load_catalog_snapshot,
     parse_catalog_text, validate_seal_entries, validate_serve_entry, write_catalog_snapshot,
     Catalog, ProfileDefinition, SealEntry, CATALOG_SNAPSHOT_FILE, DEFAULT_CATALOG_PARAMETER,
+    DEFAULT_SECRETS_PREFIX,
 };
 pub use core::error::Error;
 pub use core::slot;

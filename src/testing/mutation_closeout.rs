@@ -7,7 +7,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::application::sync::{bundle_path, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
-    use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+    use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
     use crate::core::error::Error;
     use crate::core::slot::{
         SlotError, SlotTable, DOCUMENT_MAX_BYTES, LEASE_MS, NAME_MAX_BYTES, SECRET_MAX_BYTES,
@@ -85,6 +85,7 @@ mod tests {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         };
         assert!(matches!(

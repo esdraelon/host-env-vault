@@ -7,7 +7,7 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 use crate::application::documents::pull_profile_documents;
-use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::catalog::{
     parse_catalog_text, write_catalog_snapshot, Catalog, ProfileDefinition, SealEntry,
 };
@@ -29,16 +29,23 @@ pub struct SyncOptions {
     pub identity_path: PathBuf,
     pub state_dir: PathBuf,
     pub catalog_param: String,
+    pub secrets_prefix: String,
     /// When set with [`SyncOptions::s3_prefix`], catalog document keys are pulled from S3.
     pub s3_prefix: Option<String>,
 }
 
 impl SyncOptions {
-    pub fn new(identity_path: PathBuf, state_dir: PathBuf, catalog_param: String) -> Self {
+    pub fn new(
+        identity_path: PathBuf,
+        state_dir: PathBuf,
+        catalog_param: String,
+        secrets_prefix: String,
+    ) -> Self {
         Self {
             identity_path,
             state_dir,
             catalog_param,
+            secrets_prefix,
             s3_prefix: None,
         }
     }
@@ -48,6 +55,7 @@ impl SyncOptions {
             identity_path,
             state_dir: PathBuf::from(DEFAULT_STATE_DIR),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         }
     }
@@ -64,8 +72,13 @@ pub fn bundle_path(state_dir: &Path, profile_name: &str) -> PathBuf {
 }
 
 /// SSM parameter path for one secret entry under a profile.
-pub fn ssm_entry_parameter(profile_name: &str, entry_name: &str) -> String {
-    format!("/amtgard/{profile_name}/{entry_name}")
+pub fn ssm_entry_parameter(
+    secrets_prefix: &str,
+    profile_name: &str,
+    entry_name: &str,
+) -> String {
+    let prefix = secrets_prefix.trim_end_matches('/');
+    format!("{prefix}/{profile_name}/{entry_name}")
 }
 
 /// Read the age identity or mint a new one on first sync.
@@ -116,6 +129,7 @@ pub fn sync_from_ports(
             ssm,
             s3,
             options.s3_prefix.as_deref(),
+            &options.secrets_prefix,
             kek,
             table,
             &catalog,
@@ -144,6 +158,7 @@ fn sync_one_profile(
     ssm: &dyn SsmPort,
     s3: Option<&dyn S3Port>,
     s3_prefix: Option<&str>,
+    secrets_prefix: &str,
     kek: &AgeKek,
     table: &mut SlotTable,
     catalog: &Catalog,
@@ -153,7 +168,7 @@ fn sync_one_profile(
     let definition = catalog
         .profile(profile_name)
         .ok_or_else(|| Error::NotInCatalog(profile_name.to_owned()))?;
-    let mut pulled = pull_profile_entries(ssm, definition)?;
+    let mut pulled = pull_profile_entries(ssm, secrets_prefix, definition)?;
     if let (Some(s3), Some(prefix)) = (s3, s3_prefix) {
         for doc in pull_profile_documents(s3, prefix, definition)? {
             pulled.push(PulledEntry {
@@ -196,20 +211,45 @@ struct PulledEntry {
 
 fn pull_profile_entries(
     ssm: &dyn SsmPort,
+    secrets_prefix: &str,
     definition: &ProfileDefinition,
 ) -> Result<Vec<PulledEntry>, Error> {
     let mut entries = Vec::new();
     for name in definition.inject_env() {
-        entries.push(fetch_pulled_entry(ssm, &definition.name, name, Kind::Env)?);
+        entries.push(fetch_pulled_entry(
+            ssm,
+            secrets_prefix,
+            &definition.name,
+            name,
+            Kind::Env,
+        )?);
     }
     for name in definition.runtime_env() {
-        entries.push(fetch_pulled_entry(ssm, &definition.name, name, Kind::Env)?);
+        entries.push(fetch_pulled_entry(
+            ssm,
+            secrets_prefix,
+            &definition.name,
+            name,
+            Kind::Env,
+        )?);
     }
     for name in definition.inject_files() {
-        entries.push(fetch_pulled_entry(ssm, &definition.name, name, Kind::File)?);
+        entries.push(fetch_pulled_entry(
+            ssm,
+            secrets_prefix,
+            &definition.name,
+            name,
+            Kind::File,
+        )?);
     }
     for name in definition.runtime_files() {
-        entries.push(fetch_pulled_entry(ssm, &definition.name, name, Kind::File)?);
+        entries.push(fetch_pulled_entry(
+            ssm,
+            secrets_prefix,
+            &definition.name,
+            name,
+            Kind::File,
+        )?);
     }
     Ok(entries)
 }
@@ -227,11 +267,12 @@ fn seal_entries_from_pulled(pulled: &[PulledEntry]) -> Vec<SealEntry<'_>> {
 
 fn fetch_pulled_entry(
     ssm: &dyn SsmPort,
+    secrets_prefix: &str,
     profile_name: &str,
     entry_name: &str,
     kind: Kind,
 ) -> Result<PulledEntry, Error> {
-    let param = ssm_entry_parameter(profile_name, entry_name);
+    let param = ssm_entry_parameter(secrets_prefix, profile_name, entry_name);
     let text = ssm.get_parameter(&param).map_err(map_ssm)?;
     let bytes = text.into_bytes();
     let max = match kind {
@@ -295,6 +336,7 @@ fn map_slot_acquire(err: crate::core::slot::SlotError) -> Error {
 /// Test hook: parse catalog text without SSM.
 pub fn sync_catalog_from_text(
     text: &str,
+    secrets_prefix: &str,
     ssm: &dyn SsmPort,
     s3: Option<&dyn S3Port>,
     s3_prefix: Option<&str>,
@@ -313,6 +355,7 @@ pub fn sync_catalog_from_text(
             ssm,
             s3,
             s3_prefix,
+            secrets_prefix,
             kek,
             table,
             &catalog,
@@ -343,12 +386,12 @@ mod unit_tests {
     #[test]
     fn bundle_and_ssm_paths_follow_plan_layout() {
         assert_eq!(
-            bundle_path(Path::new("/var/lib/host-env-vault"), "denarius-web"),
-            PathBuf::from("/var/lib/host-env-vault/denarius-web.hev")
+            bundle_path(Path::new("/var/lib/host-env-vault"), "app-web"),
+            PathBuf::from("/var/lib/host-env-vault/app-web.hev")
         );
         assert_eq!(
-            ssm_entry_parameter("denarius-web", "DB_PASS"),
-            "/amtgard/denarius-web/DB_PASS"
+            ssm_entry_parameter(DEFAULT_SECRETS_PREFIX, "app-web", "DB_PASS"),
+            "/host-env-vault/app-web/DB_PASS"
         );
     }
 

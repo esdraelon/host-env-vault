@@ -14,7 +14,7 @@ use adapters::process_gh::ProcessGh;
 #[derive(Parser)]
 #[command(
     name = "host-env-vault",
-    about = "Host profile vault for Denarius and the IDP"
+    about = "Host profile vault: sync, render, and serve secrets per profile"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -60,6 +60,8 @@ enum Command {
         state_dir: PathBuf,
         #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
         catalog_param: String,
+        #[arg(long, default_value = host_env_vault::DEFAULT_SECRETS_PREFIX)]
+        secrets_prefix: String,
         #[arg(long)]
         s3_bucket: Option<String>,
         #[arg(long)]
@@ -161,13 +163,18 @@ fn run() -> Result<(), host_env_vault::Error> {
             identity,
             state_dir,
             catalog_param,
+            secrets_prefix,
             s3_bucket,
             s3_prefix,
         } => {
             let kek = host_env_vault::load_or_create_identity(&identity)?;
             let mut table = SlotTable::new();
-            let mut options =
-                host_env_vault::SyncOptions::new(identity, state_dir.clone(), catalog_param);
+            let mut options = host_env_vault::SyncOptions::new(
+                identity,
+                state_dir.clone(),
+                catalog_param,
+                secrets_prefix,
+            );
             let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
             if let Some(bucket) = s3_bucket {
                 options = options.with_s3_prefix(s3_prefix.unwrap_or_default());

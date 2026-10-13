@@ -55,8 +55,9 @@ mod tests {
     #[test]
     fn memory_ssm_round_trips_parameters() {
         let ssm = MemorySsm::new();
-        ssm.put("/amtgard/vault/profiles", "{}");
-        assert_eq!(ssm.get_parameter("/amtgard/vault/profiles").unwrap(), "{}");
+        use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+        ssm.put(DEFAULT_CATALOG_PARAMETER, "{}");
+        assert_eq!(ssm.get_parameter(DEFAULT_CATALOG_PARAMETER).unwrap(), "{}");
         assert!(matches!(
             ssm.get_parameter("/missing"),
             Err(SsmError::NotFound(_))

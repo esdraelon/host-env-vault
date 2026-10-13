@@ -115,6 +115,6 @@ mod tests {
 
     #[test]
     fn default_catalog_parameter_is_documented_in_plan() {
-        assert_eq!(DEFAULT_CATALOG_PARAMETER, "/amtgard/vault/profiles");
+        assert_eq!(DEFAULT_CATALOG_PARAMETER, "/host-env-vault/profiles");
     }
 }

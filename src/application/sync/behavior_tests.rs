@@ -5,7 +5,7 @@ use crate::application::sync::{
 };
 use crate::application::sync::{load_or_create_identity, sync_catalog_from_text};
 use crate::catalog::parse_catalog_text;
-use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::Kind;
@@ -38,13 +38,13 @@ fn temp_state_dir(label: &str) -> PathBuf {
 
 fn seed_web_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
-    ssm.put("/amtgard/denarius-web/DB_PASS", "db-secret-value");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "db-secret-value");
 }
 
 fn seed_two_profile_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, TWO_PROFILE_CATALOG);
-    ssm.put("/amtgard/denarius-web/DB_PASS", "web-db");
-    ssm.put("/amtgard/denarius-connect/STRIPE_SECRET_KEY", "sk_live");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "web-db");
+    ssm.put("/host-env-vault/denarius-connect/STRIPE_SECRET_KEY", "sk_live");
 }
 
 #[test]
@@ -62,6 +62,7 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
         identity_path: work.join("kek.age"),
         state_dir: PathBuf::from("."),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -82,6 +83,7 @@ fn sync_success_replaces_bundle_on_disk() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -129,6 +131,7 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     assert!(matches!(
@@ -147,7 +150,7 @@ fn pull_from_ssm_does_not_occupy_sync_slot() {
     let catalog = parse_catalog_text(WEB_CATALOG).unwrap();
     let definition = catalog.profile("denarius-web").unwrap();
     let table = SlotTable::new();
-    super::pull_profile_entries(&ssm, definition).unwrap();
+    super::pull_profile_entries(&ssm, DEFAULT_SECRETS_PREFIX, definition).unwrap();
     assert!(!table.slot_ref(SYNC_SLOT_INDEX).unwrap().in_use());
     assert!(table
         .slot_ref(SYNC_SLOT_INDEX)
@@ -168,6 +171,7 @@ fn sync_two_profiles_leaves_slot_free_between_and_after() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -207,6 +211,7 @@ fn missing_catalog_parameter_fails_without_writing_bundles() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     assert!(matches!(
@@ -239,6 +244,7 @@ fn unavailable_catalog_ssm_maps_to_parse_error() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     assert!(matches!(
@@ -253,10 +259,10 @@ fn sync_catalog_from_text_matches_ssm_catalog_path() {
     let state_dir = temp_state_dir("from-text");
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
-    ssm.put("/amtgard/denarius-web/DB_PASS", "from-text");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "from-text");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
-    sync_catalog_from_text(WEB_CATALOG, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
+    sync_catalog_from_text(WEB_CATALOG, DEFAULT_SECRETS_PREFIX, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
     let bytes = std::fs::read(bundle_path(&state_dir, "denarius-web")).unwrap();
     let opened = open_bytes(&bytes, &kek).unwrap();
     assert_eq!(&*opened.entries[0].bytes, b"from-text");
@@ -270,13 +276,14 @@ fn max_length_ssm_value_is_accepted() {
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
     let value = "x".repeat(SECRET_MAX_BYTES);
-    ssm.put("/amtgard/denarius-web/DB_PASS", value.clone());
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", value.clone());
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -304,13 +311,14 @@ fn file_entries_skip_env_line_validation() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, FILE_CATALOG);
-    ssm.put("/amtgard/denarius-worker/teller.key", "line-one\nline-two");
+    ssm.put("/host-env-vault/denarius-worker/teller.key", "line-one\nline-two");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -322,12 +330,13 @@ fn sync_catalog_from_text_counts_profile_failures() {
     let state_dir = temp_state_dir("text-partial");
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
-    ssm.put("/amtgard/denarius-web/DB_PASS", "ok");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "ok");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     assert!(matches!(
         sync_catalog_from_text(
             TWO_PROFILE_CATALOG,
+            DEFAULT_SECRETS_PREFIX,
             &ssm,
             None,
             None,
@@ -348,13 +357,14 @@ fn invalid_env_value_from_ssm_is_rejected() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
-    ssm.put("/amtgard/denarius-web/DB_PASS", "bad\nline");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "bad\nline");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     assert!(matches!(
@@ -387,6 +397,7 @@ fn sync_seals_nginx_documents_from_fake_s3() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: Some("recovery".into()),
     };
     sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options).unwrap();
@@ -412,6 +423,7 @@ fn atomic_replace_does_not_leave_tmp_when_rename_succeeds() {
         identity_path: state_dir.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();

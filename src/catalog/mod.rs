@@ -13,7 +13,11 @@ pub use local::{
 };
 pub use parse::{parse_catalog_text, Catalog, ProfileDefinition};
 
-pub const DEFAULT_CATALOG_PARAMETER: &str = "/amtgard/vault/profiles";
+/// SSM parameter holding the profile catalog JSON (`SecureString`).
+pub const DEFAULT_CATALOG_PARAMETER: &str = "/host-env-vault/profiles";
+
+/// Prefix for per-entry SSM parameters: `{prefix}/{profile}/{entry}`.
+pub const DEFAULT_SECRETS_PREFIX: &str = "/host-env-vault";
 
 #[cfg(test)]
 mod behavior_tests;

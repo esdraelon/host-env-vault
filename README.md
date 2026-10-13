@@ -1,91 +1,500 @@
 # host-env-vault
 
-Spike of the host agent for Denarius and the Amtgard IDP. The implementation plan is [docs/plan.md](docs/plan.md). Source layout is [docs/architecture.md](docs/architecture.md).
+Secrets for containers, kept on the host—not in git, not in the image, and not in one shared `.env` every service can read.
 
-It is a unix service. It has no TCP listener and no web UI.
+The agent **syncs** from AWS (or, in a future release, from local dev files), **seals** encrypted bundles on disk, then either **renders** files before start or **serves** them over a unix socket while the app runs.
 
-The posture it locks in:
+---
 
-- A profile is a process, not a thread. PHP shares an address space, so a mode inside one process is not a boundary.
-- `render` writes one profile into an empty directory. `install.sh` bind-mounts that directory read-only. Secrets are files. They are not `env_file` values, which show up in `docker inspect`.
-- The on-disk bundle is ciphertext. An age identity wraps the data key. That identity is the KEK seam a cloud KMS provider can replace without renaming profiles.
-- `serve` keeps the data key only for `denarius-worker`. It drops the sealed env and files after checking the bundle. The socket path is the profile. Frames wrap or unwrap a 32-byte key. A frame cannot name another profile or ask for `STRIPE_SECRET_KEY`.
-- Web, connect, and both IDP profiles have no socket.
+## Daily driver
 
-## Profiles
+This is the workflow most operators care about: install once, sync on a schedule, render before deploy, run `serve` for socket profiles.
 
-| Profile | Runtime socket | Holds | Does not hold |
-| --- | --- | --- | --- |
-| `denarius-web` | no | `DB_PASS`, `IDP_CLIENT_SECRET`, `STRIPE_PUBLISHABLE_KEY` | Stripe secret, `APP_KEY` |
-| `denarius-worker` | yes | restricted Stripe key, webhook and provider secrets, `APP_KEY`, Teller key files | publishable key |
-| `denarius-connect` | no | `STRIPE_SECRET_KEY` only | database, `APP_KEY` |
-| `idp-http` | no | provisional HTTP secrets, including the signing key file | |
-| `idp-worker` | no | provisional `DB_PASS`, `JWT_KEY`, signing key file | mail and social client secrets |
+### One-time setup
 
-`idp-http` and `idp-worker` are marked provisional. Both may still open `oauth-private.key` until those processes are traced. Seal already refuses anything outside the list, so a wrong name fails closed.
+1. **Build and install** the binary on the Linux host (see [Building](#building) at the bottom).
 
-## Layout
+2. **Create directories** (or use your own paths and pass flags every time):
 
-```
-/etc/host-env-vault/kek.age                         age identity, mode 0400, not in bundle backups
-/var/lib/host-env-vault/denarius-worker.hev         ciphertext bundle
-/run/host-env-vault/denarius/blue/worker/           tmpfs render: secrets.env and files/
-/run/host-env-vault/sockets/denarius-worker.sock    mode 0600, mounted only into the worker
-```
+   ```bash
+   sudo install -d -m 0700 /etc/host-env-vault
+   sudo install -d -m 0700 /var/lib/host-env-vault
+   sudo install -d -m 0700 /run/host-env-vault
+   ```
 
-Rendered with no gid: directory `0700`, files `0400`. That matches the current images, which run as root.
+3. **AWS** — On the host, use an instance role (recommended) or export credentials for manual runs. Set region:
 
-Rendered with `--gid 33`: directory `0550` root:33, files `0440` root:33. Use that when the container user is `www-data` and does not own the directory. Pair it with `serve --require-uid` set to the host uid of the connecting process. The missing mount is the real authorization. The uid check is the second one.
+   ```bash
+   export AWS_REGION=us-east-1
+   ```
 
-## Bundle
+4. **Parameter Store** — Put your [profile catalog](#4-configuring-profiles) at `/host-env-vault/profiles` (or another name with `--catalog-param`). For each secret entry, create a **SecureString** at:
 
-`HEV1`, version, profile name, age-wrapped 32-byte DEK, XChaCha20-Poly1305 of the entries. The profile name is associated data. A relabeled header does not decrypt. A fresh DEK is used for every seal.
+   ```text
+   /host-env-vault/<profile>/<entry>
+   ```
 
-## Commands
+   Example: profile `app-web`, entry `DB_PASS` → `/host-env-vault/app-web/DB_PASS`.
 
-```
-cargo test
+5. **First sync** (creates `/etc/host-env-vault/kek.age` if missing):
 
-cargo run -- keygen --out /etc/host-env-vault/kek.age
+   ```bash
+   sudo host-env-vault sync \
+     --identity /etc/host-env-vault/kek.age \
+     --state-dir /var/lib/host-env-vault
+   ```
 
-cargo run -- seal \
-  --profile denarius-worker \
+6. **Socket profiles** — Start one `serve` process per profile that has `socket: true` (see [systemd example](#systemd-sketch) below).
+
+### Typical day
+
+| When | What you do |
+| --- | --- |
+| Secret rotated in SSM | `host-env-vault sync …` |
+| New deploy | `host-env-vault render --profile app-web --dest /run/host-env-vault/app-web/current …` then restart the container |
+| Runtime-only secret | App connects to `/run/host-env-vault/sockets/<profile>.sock` (no re-render) |
+| AWS outage | Last good sync still works; render and serve do not call AWS |
+
+Sync failures **do not delete** existing `.hev` bundles. Fix AWS or parameters, then sync again.
+
+### CLI cheat sheet
+
+All commands take `--identity` and `--state-dir` unless you rely on defaults (`state_dir` = `/var/lib/host-env-vault`).
+
+```bash
+# Refresh all profiles from AWS
+host-env-vault sync \
   --identity /etc/host-env-vault/kek.age \
-  --in ./staging/denarius-worker \
-  --out /var/lib/host-env-vault/denarius-worker.hev
+  --state-dir /var/lib/host-env-vault
 
-cargo run -- render \
-  --profile denarius-worker \
+# Optional: non-default SSM names
+host-env-vault sync \
+  --catalog-param /my-org/vault/profiles \
+  --secrets-prefix /my-org/vault/secrets \
+  …
+
+# Optional: pull plain recovery files from S3 into bundles
+host-env-vault sync \
+  --s3-bucket my-recovery-bucket \
+  --s3-prefix recovery/ \
+  …
+
+# Write inject secrets to an empty directory (deploy step)
+host-env-vault render \
+  --profile app-web \
+  --dest /run/host-env-vault/app-web/current \
+  …
+
+# Runtime socket (one profile per process)
+host-env-vault serve \
+  --profile app-worker \
+  --runtime-dir /run/host-env-vault \
+  …
+```
+
+`render` refuses a non-empty `--dest`. Your deploy script should use a fresh directory or remove the old slot before rendering.
+
+### Mount into Docker
+
+After render:
+
+```yaml
+services:
+  web:
+    volumes:
+      - /run/host-env-vault/app-web/current:/secrets:ro
+    environment:
+      SECRETS_FILE: /secrets/secrets.env
+```
+
+For a runtime profile, mount only the socket:
+
+```yaml
+  worker:
+    volumes:
+      - /run/host-env-vault/sockets/app-worker.sock:/var/run/host-env-vault.sock
+```
+
+Map container user id to the catalog `require_uid` for that profile.
+
+### systemd sketch
+
+**Timer — sync hourly**
+
+```ini
+# /etc/systemd/system/host-env-vault-sync.service
+[Service]
+Type=oneshot
+Environment=AWS_REGION=us-east-1
+ExecStart=/usr/local/bin/host-env-vault sync \
   --identity /etc/host-env-vault/kek.age \
-  --bundle /var/lib/host-env-vault/denarius-worker.hev \
-  --dest /run/host-env-vault/denarius/blue/worker
+  --state-dir /var/lib/host-env-vault
+
+# /etc/systemd/system/host-env-vault-sync.timer
+[Timer]
+OnCalendar=hourly
+Persistent=true
 ```
 
-Staging directory:
+**Service — one runtime profile**
 
-```
-staging/denarius-worker/secrets.env
-staging/denarius-worker/files/teller.pem
-staging/denarius-worker/files/teller.key
-```
-
-`install.sh` calls `render` before `docker compose up`. Plain settings stay in the ordinary env file. `TELLER_CERT_PATH` in that file points at the mounted `files/teller.pem`.
-
-```
-cargo run -- serve \
+```ini
+# /etc/systemd/system/host-env-vault-serve@app-worker.service
+[Service]
+ExecStart=/usr/local/bin/host-env-vault serve \
+  --profile %i \
   --identity /etc/host-env-vault/kek.age \
   --state-dir /var/lib/host-env-vault \
-  --runtime-dir /run/host-env-vault \
-  --poll-secs 3600
+  --runtime-dir /run/host-env-vault
+Restart=always
 ```
 
-The poll re-reads runtime bundles and replaces the data key. It does not decrypt `denarius-web` or the IDP profiles into the daemon.
+Enable with `systemctl enable --now host-env-vault-serve@app-worker.service`.
 
-`packaging/host-env-vault.service` is the systemd unit. It starts before Docker.
+Example unit files also live under `packaging/`; adjust profile names and paths to match your host.
 
-## Left for the next cut
+### Local development (planned)
 
-- A KMS implementation of the same wrap/unwrap the age identity does now.
-- `install.sh` and compose mounts in Denarius and the IDP.
-- A trace of which files `amtgardidpapp` and `jwt-pvh-worker.php` open, then a tighter IDP allowlist.
-- `USER www-data` in the images, with `--gid` and `--require-uid` to match.
+Today, sync requires AWS. The [revision plan](docs/revision.md) adds **`sync --source local`** with a directory of `catalog.json` and per-profile `.env` files so laptops can render and serve without SSM. Until that ships, use the in-memory test ports in the crate or a small EC2/SSM sandbox.
+
+---
+
+## 1. What this is
+
+You define **profiles** (for example `app-web`, `app-worker`). Each profile lists which secret **names** exist and whether they are **injected** at start or fetched at **runtime**.
+
+The host keeps:
+
+| Path | Role |
+| --- | --- |
+| `/etc/host-env-vault/kek.age` | Age key that encrypts local bundles (stay on this host) |
+| `/var/lib/host-env-vault/` | `catalog.json` snapshot and `<profile>.hev` bundles |
+| `/run/host-env-vault/` | Render output and `sockets/*.sock` |
+
+**Sync** downloads the catalog and secrets, then seals them locally. **Render** and **serve** only read those bundles—fast and works offline after a good sync.
+
+There is no HTTP API and no admin UI.
+
+---
+
+## 2. Basic profile and AWS configuration
+
+### Credentials and IAM
+
+The binary uses the normal AWS SDK credential chain. Production hosts should use an **instance profile** with:
+
+- `ssm:GetParameter` (with decryption) on your catalog parameter and `{secrets_prefix}/*`
+- Optional `s3:GetObject` on a recovery prefix if you use `documents` in the catalog
+
+Set `AWS_REGION` or `AWS_DEFAULT_REGION`.
+
+### Defaults
+
+| Setting | Default | Flag |
+| --- | --- | --- |
+| Catalog parameter | `/host-env-vault/profiles` | `sync --catalog-param` |
+| Secret parameters | `/host-env-vault/<profile>/<entry>` | `sync --secrets-prefix` |
+| State directory | `/var/lib/host-env-vault` | `--state-dir` |
+
+Each secret value is a Standard **SecureString** (max **4096 bytes**).
+
+### S3 documents (optional)
+
+Profiles may list `documents`: S3 keys for **non-secret** text (nginx snippets, plain env templates). Pass `--s3-bucket` and `--s3-prefix` on sync. Do not store private keys or API tokens in S3 through this path.
+
+---
+
+## 3. The two profile modes
+
+| Mode | Catalog | Command | When the app gets data |
+| --- | --- | --- | --- |
+| **Inject** | `inject`, `inject_files` | `render` | At start: `secrets.env` and `files/` under `--dest` |
+| **Runtime** | `runtime`, `runtime_files`, `socket: true` | `serve` | On demand via unix socket |
+
+You can mix both on one profile: inject the database password at start, fetch a signing key over the socket when needed.
+
+**Runtime rules**
+
+- `socket: true` requires `require_uid` (Linux uid of the connecting process).
+- Secrets unpacked in memory expire after **2000 ms** (lease); fetch and use them immediately.
+- One `serve` process per socket profile.
+
+**Inject permissions** — Optional catalog `gid` (or `render --gid`) writes `0550` / `0440` files so a container group can read without owning the directory.
+
+---
+
+## 4. Configuring profiles
+
+Store catalog JSON in the catalog SSM parameter (SecureString).
+
+```json
+{
+  "profiles": [
+    {
+      "name": "app-web",
+      "inject": ["DB_PASS", "SESSION_SECRET"],
+      "runtime": [],
+      "inject_files": [],
+      "runtime_files": [],
+      "socket": false,
+      "gid": 33
+    },
+    {
+      "name": "app-worker",
+      "inject": ["DB_PASS"],
+      "runtime": ["API_SECRET"],
+      "inject_files": [],
+      "runtime_files": ["signing.pem"],
+      "socket": true,
+      "require_uid": 1000
+    }
+  ]
+}
+```
+
+| Field | Purpose |
+| --- | --- |
+| `name` | Profile id (used in paths, bundle file, socket name) |
+| `inject` / `runtime` | Env-style entry names for render vs socket |
+| `inject_files` / `runtime_files` | File basenames under `files/` or socket file fetch |
+| `socket` | Enable `serve` for this profile |
+| `require_uid` | Required when `socket` is true |
+| `gid` | Group for rendered file modes |
+| `documents` | S3 keys loaded on sync (non-secret files) |
+
+Every listed name must exist under `{secrets_prefix}/{profile}/{name}` in SSM (except document content, which comes from S3).
+
+---
+
+## 5. Using secrets in your app
+
+### Injected secrets (files)
+
+After render, read **`secrets.env`**: one `KEY=value` per line, no quoting rules beyond “value is raw bytes until newline”.
+
+Optional **`files/<name>`** for inject file entries (PEM, keys).
+
+#### Python
+
+```python
+from pathlib import Path
+
+def load_injected_env(secrets_dir: Path) -> dict[str, str]:
+    env_path = secrets_dir / "secrets.env"
+    out: dict[str, str] = {}
+    for line in env_path.read_text().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        out[key] = value
+    return out
+
+# db_password = load_injected_env(Path("/secrets"))["DB_PASS"]
+```
+
+#### PHP
+
+```php
+function load_injected_env(string $secretsDir): array
+{
+    $lines = file($secretsDir . '/secrets.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    $env = [];
+    foreach ($lines as $line) {
+        if ($line === '' || $line[0] === '#') {
+            continue;
+        }
+        [$key, $value] = explode('=', $line, 2);
+        $env[$key] = $value;
+    }
+    return $env;
+}
+
+// $dbPass = load_injected_env('/secrets')['DB_PASS'];
+```
+
+#### TypeScript (Node)
+
+```typescript
+import fs from "node:fs";
+import path from "node:path";
+
+export function loadInjectedEnv(secretsDir: string): Record<string, string> {
+  const text = fs.readFileSync(path.join(secretsDir, "secrets.env"), "utf8");
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    if (!line || line.startsWith("#")) continue;
+    const i = line.indexOf("=");
+    if (i < 0) continue;
+    out[line.slice(0, i)] = line.slice(i + 1);
+  }
+  return out;
+}
+```
+
+### Runtime secrets (unix socket)
+
+Socket path: `{runtime_dir}/sockets/{profile}.sock`.
+
+**Request frame:** `opcode (1 byte)` + `length (u32 LE)` + `body (UTF-8 entry name)`  
+**Opcodes:** `1` = env entry, `2` = file entry  
+**Response:** `status (1 byte, 0 = ok)` + `length (u32 LE)` + `body (secret bytes)`
+
+Complete each request within **2000 ms** of the agent unpacking the profile. Only names on the profile’s **runtime** lists are allowed.
+
+#### Python
+
+```python
+import socket
+import struct
+
+OP_FETCH_ENV = 1
+OP_FETCH_FILE = 2
+
+def fetch_runtime_secret(sock_path: str, entry: str, *, file_entry: bool = False) -> bytes:
+    opcode = OP_FETCH_FILE if file_entry else OP_FETCH_ENV
+    body = entry.encode("utf-8")
+    frame = bytes([opcode]) + struct.pack("<I", len(body)) + body
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(sock_path)
+        s.sendall(frame)
+        header = s.recv(5)
+        if len(header) != 5:
+            raise RuntimeError("short response header")
+        status, length = header[0], struct.unpack("<I", header[1:5])[0]
+        if status != 0:
+            raise PermissionError(f"denied fetching {entry!r}")
+        chunks = []
+        while length:
+            chunk = s.recv(length)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            length -= len(chunk)
+        return b"".join(chunks)
+
+# api_secret = fetch_runtime_secret("/run/host-env-vault/sockets/app-worker.sock", "API_SECRET")
+```
+
+#### PHP
+
+```php
+function fetch_runtime_secret(string $sockPath, string $entry, bool $fileEntry = false): string
+{
+    $opcode = $fileEntry ? 2 : 1;
+    $body = $entry;
+    $frame = chr($opcode) . pack('V', strlen($body)) . $body;
+    $sock = socket_create(AF_UNIX, SOCK_STREAM, 0);
+    socket_connect($sock, $sockPath);
+    socket_write($sock, $frame, strlen($frame));
+    $header = socket_read($sock, 5);
+    if ($header === false || strlen($header) !== 5) {
+        throw new RuntimeException('short response header');
+    }
+    $status = ord($header[0]);
+    $length = unpack('V', substr($header, 1, 4))[1];
+    if ($status !== 0) {
+        throw new RuntimeException("denied fetching {$entry}");
+    }
+    $data = '';
+    while (strlen($data) < $length) {
+        $chunk = socket_read($sock, $length - strlen($data));
+        if ($chunk === false || $chunk === '') {
+            break;
+        }
+        $data .= $chunk;
+    }
+    socket_close($sock);
+    return $data;
+}
+```
+
+#### TypeScript (Node)
+
+```typescript
+import net from "node:net";
+
+const OP_FETCH_ENV = 1;
+const OP_FETCH_FILE = 2;
+
+export function fetchRuntimeSecret(
+  sockPath: string,
+  entry: string,
+  fileEntry = false,
+): Promise<Buffer> {
+  const opcode = fileEntry ? OP_FETCH_FILE : OP_FETCH_ENV;
+  const body = Buffer.from(entry, "utf8");
+  const frame = Buffer.concat([
+    Buffer.from([opcode]),
+    Buffer.alloc(4),
+    body,
+  ]);
+  frame.writeUInt32LE(body.length, 1);
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const client = net.createConnection(sockPath, () => client.write(frame));
+    client
+      .once("readable", () => {
+        const header = client.read(5) as Buffer | null;
+        if (!header || header.length < 5) {
+          reject(new Error("short response header"));
+          client.destroy();
+          return;
+        }
+        const status = header[0];
+        const length = header.readUInt32LE(1);
+        if (status !== 0) {
+          reject(new Error(`denied fetching ${entry}`));
+          client.destroy();
+          return;
+        }
+        let remaining = length;
+        client.on("readable", () => {
+          let chunk: Buffer | null;
+          while (remaining > 0 && (chunk = client.read(remaining))) {
+            chunks.push(chunk);
+            remaining -= chunk.length;
+          }
+          if (remaining === 0) {
+            client.destroy();
+            resolve(Buffer.concat(chunks));
+          }
+        });
+      })
+      .on("error", reject);
+  });
+}
+```
+
+---
+
+## Limits
+
+| Limit | Value |
+| --- | --- |
+| Secrets per profile (in memory) | 32 |
+| Secret size | 4096 bytes |
+| Documents per profile | 20 |
+| Document size | 100 KB |
+| Name length | 64 characters |
+
+Split oversized profiles in the catalog if you hit these caps.
+
+---
+
+## Building
+
+```bash
+cargo build --release
+cargo test
+```
+
+Install `target/release/host-env-vault` to `/usr/local/bin/`.
+
+---
+
+## Further reading
+
+- [docs/revision.md](docs/revision.md) — M10+ stacked work: local dev sync, config file, **systemd installer (M15)**, **profile setup wizard (M16)**
+- [docs/architecture.md](docs/architecture.md) — module layout for contributors
+- [docs/plan.md](docs/plan.md) — original milestone checklist

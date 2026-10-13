@@ -6,7 +6,7 @@ use crate::application::render::{render_from_vault, RenderOptions, RENDER_SLOT_I
 use crate::application::sync::{
     sync_catalog_from_text, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX,
 };
-use crate::catalog::{write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER};
+use crate::catalog::{write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::error::Error;
 use crate::core::slot::SlotTable;
 use crate::legacy::profile::Kind;
@@ -39,11 +39,11 @@ fn mode_of(path: &std::path::Path) -> u32 {
 
 fn seed_worker_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER_CATALOG);
-    ssm.put("/amtgard/denarius-worker/DB_PASS", "db");
-    ssm.put("/amtgard/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
-    ssm.put("/amtgard/denarius-worker/APP_KEY", "app-key");
-    ssm.put("/amtgard/denarius-worker/STRIPE_SECRET_KEY", "sk");
-    ssm.put("/amtgard/denarius-worker/teller.key", "teller-bytes");
+    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/denarius-worker/STRIPE_WEBHOOK_SECRET", "whsec");
+    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "app-key");
+    ssm.put("/host-env-vault/denarius-worker/STRIPE_SECRET_KEY", "sk");
+    ssm.put("/host-env-vault/denarius-worker/teller.key", "teller-bytes");
 }
 
 #[test]
@@ -61,6 +61,7 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
         identity_path: root.join("kek.age"),
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &sync_options).unwrap();
@@ -156,6 +157,7 @@ fn render_refuses_dirty_destination() {
     let mut table = SlotTable::new();
     sync_catalog_from_text(
         WORKER_CATALOG,
+        DEFAULT_SECRETS_PREFIX,
         &ssm,
         None,
         None,
@@ -191,7 +193,7 @@ fn render_gid_override_applies_group_readable_modes() {
         DEFAULT_CATALOG_PARAMETER,
         r#"{"profiles":[{"name":"denarius-web","inject":["DB_PASS"],"runtime":[]}]}"#,
     );
-    ssm.put("/amtgard/denarius-web/DB_PASS", "secret");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "secret");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_from_ssm(
@@ -202,6 +204,7 @@ fn render_gid_override_applies_group_readable_modes() {
             identity_path: root.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         },
     )

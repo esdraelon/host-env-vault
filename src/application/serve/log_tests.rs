@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::application::serve::{bind_serve_socket, fetch_runtime_entry, ServeOptions};
 use crate::application::sync::{sync_from_ssm, SyncOptions};
 use crate::catalog::{
-    load_catalog_snapshot, parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER,
+    load_catalog_snapshot, parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX,
 };
 use crate::core::slot::SlotTable;
 use crate::legacy::profile::Kind;
@@ -40,8 +40,8 @@ fn log_serve_deny_runtime_entry_and_return_success() {
     fs::create_dir(&state_dir).unwrap();
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
-    ssm.put("/amtgard/denarius-worker/DB_PASS", "db");
-    ssm.put("/amtgard/denarius-worker/APP_KEY", "key");
+    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "key");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     sync_from_ssm(
@@ -52,6 +52,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             identity_path: root.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         },
     )

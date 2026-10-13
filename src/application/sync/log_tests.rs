@@ -2,7 +2,7 @@ use serial_test::serial;
 use std::path::PathBuf;
 
 use crate::application::sync::{load_or_create_identity, sync_from_ssm, SyncOptions};
-use crate::catalog::DEFAULT_CATALOG_PARAMETER;
+use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::ports::MemorySsm;
 use crate::testing::log_test_capture::capture_info_logs;
@@ -38,7 +38,7 @@ fn log_sync_catalog_loaded_and_sealed() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB);
-    ssm.put("/amtgard/denarius-web/DB_PASS", "secret");
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", "secret");
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
         let mut table = SlotTable::new();
@@ -46,6 +46,7 @@ fn log_sync_catalog_loaded_and_sealed() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         };
         sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -72,6 +73,7 @@ fn log_sync_profile_failed_keeping_bundle() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         };
         let _ = sync_from_ssm(&ssm, &kek, &mut table, &options);
@@ -91,7 +93,7 @@ fn log_sync_reject_oversize_parameter() {
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB);
     let huge = "x".repeat(SECRET_MAX_BYTES + 1);
-    ssm.put("/amtgard/denarius-web/DB_PASS", huge);
+    ssm.put("/host-env-vault/denarius-web/DB_PASS", huge);
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
         let mut table = SlotTable::new();
@@ -99,6 +101,7 @@ fn log_sync_reject_oversize_parameter() {
             identity_path: state_dir.join("kek.age"),
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
             s3_prefix: None,
         };
         let _ = sync_from_ssm(&ssm, &kek, &mut table, &options);

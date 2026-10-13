@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::application::render::{render_from_vault, RenderOptions};
 use crate::application::sync::sync_catalog_from_text;
-use crate::catalog::write_catalog_snapshot;
+use crate::catalog::{write_catalog_snapshot, DEFAULT_SECRETS_PREFIX};
 use crate::core::slot::SlotTable;
 use crate::legacy::profile::Kind;
 use crate::ports::MemorySsm;
@@ -32,11 +32,11 @@ fn log_render_skips_runtime_entries_and_writes_destination() {
     let dest = root.join("dest");
     let ssm = MemorySsm::new();
     ssm.put(crate::catalog::DEFAULT_CATALOG_PARAMETER, WORKER);
-    ssm.put("/amtgard/denarius-worker/DB_PASS", "db");
-    ssm.put("/amtgard/denarius-worker/APP_KEY", "key");
+    ssm.put("/host-env-vault/denarius-worker/DB_PASS", "db");
+    ssm.put("/host-env-vault/denarius-worker/APP_KEY", "key");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
-    sync_catalog_from_text(WORKER, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
+    sync_catalog_from_text(WORKER, DEFAULT_SECRETS_PREFIX, &ssm, None, None, &kek, &mut table, &state_dir).unwrap();
 
     let text = capture_info_logs(|| {
         render_from_vault(
