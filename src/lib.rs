@@ -15,6 +15,7 @@ compile_error!("host-env-vault is a unix host agent");
 
 pub mod application;
 pub mod catalog;
+pub mod config;
 pub mod core;
 pub mod legacy;
 pub mod ports;
@@ -44,6 +45,11 @@ pub use application::sync::{
     sync_from_local, sync_from_ports, sync_from_secret_source, sync_from_ssm, SyncOptions,
     DEFAULT_STATE_DIR,
     SYNC_SLOT_INDEX,
+};
+pub use config::{
+    load_config, parse_config_text, parse_sync_source, resolve_config_path, FileConfig,
+    RenderCliOverrides, ResolvedSync, ServeCliOverrides, SyncCliOverrides, SyncSourceKind,
+    CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH, DEFAULT_RUNTIME_DIR,
 };
 pub use catalog::{
     bind_catalog_profile, catalog_snapshot_path, load_catalog_from_ssm, load_catalog_snapshot,

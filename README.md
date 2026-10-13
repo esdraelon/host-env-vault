@@ -57,9 +57,37 @@ This is the workflow most operators care about: install once, sync on a schedule
 
 Sync failures **do not delete** existing `.hev` bundles. Fix AWS or parameters, then sync again.
 
+### Configuration file
+
+Optional TOML at `/etc/host-env-vault/config.toml`, or set `HOST_ENV_VAULT_CONFIG` to another path. Pass `--config /path/to/config.toml` to override both.
+
+**Precedence:** CLI flags beat the file; the file beats built-in defaults.
+
+```toml
+identity = "/etc/host-env-vault/kek.age"
+state_dir = "/var/lib/host-env-vault"
+runtime_dir = "/run/host-env-vault"
+
+[sync]
+source = "ssm"   # or "local"
+catalog_param = "/host-env-vault/profiles"
+secrets_prefix = "/host-env-vault"
+local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
+# s3_bucket = "my-recovery-bucket"
+# s3_prefix = "recovery/"
+```
+
+With this in place, production sync/render/serve can omit repeated path flags:
+
+```bash
+sudo host-env-vault sync
+host-env-vault render --profile app-web --dest /run/host-env-vault/app-web/current
+host-env-vault serve --profile app-worker
+```
+
 ### CLI cheat sheet
 
-All commands take `--identity` and `--state-dir` unless you rely on defaults (`state_dir` = `/var/lib/host-env-vault`).
+`sync`, `render`, and `serve` read `identity`, `state_dir`, and (for serve) `runtime_dir` from the config file when flags are omitted. `state_dir` defaults to `/var/lib/host-env-vault` if neither flag nor file sets it.
 
 ```bash
 # Refresh all profiles from AWS

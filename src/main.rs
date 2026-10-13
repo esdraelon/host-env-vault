@@ -4,6 +4,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use host_env_vault::config::{
+    load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, SyncCliOverrides,
+    SyncSourceKind,
+};
 use host_env_vault::ports::{S3Error, S3Port, SsmError};
 use host_env_vault::{AgeKek, ProfileId, SlotTable};
 
@@ -17,6 +21,10 @@ use adapters::process_gh::ProcessGh;
     about = "Host profile vault: sync, render, and serve secrets per profile"
 )]
 struct Cli {
+    /// Config file path (overrides `HOST_ENV_VAULT_CONFIG` and the default path).
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -44,9 +52,9 @@ enum Command {
         #[arg(long)]
         profile: String,
         #[arg(long)]
-        identity: PathBuf,
-        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
-        state_dir: PathBuf,
+        identity: Option<PathBuf>,
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
         #[arg(long)]
         dest: PathBuf,
         #[arg(long)]
@@ -55,15 +63,15 @@ enum Command {
     /// Pull catalog and secrets into local sealed bundles (SSM or local dev files).
     Sync {
         #[arg(long)]
-        identity: PathBuf,
-        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
-        state_dir: PathBuf,
-        #[arg(long, value_enum, default_value_t = SyncSource::Ssm)]
-        source: SyncSource,
-        #[arg(long, default_value = host_env_vault::DEFAULT_CATALOG_PARAMETER)]
-        catalog_param: String,
-        #[arg(long, default_value = host_env_vault::DEFAULT_SECRETS_PREFIX)]
-        secrets_prefix: String,
+        identity: Option<PathBuf>,
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        source: Option<SyncSource>,
+        #[arg(long)]
+        catalog_param: Option<String>,
+        #[arg(long)]
+        secrets_prefix: Option<String>,
         #[arg(long)]
         local_secrets_dir: Option<PathBuf>,
         #[arg(long)]
@@ -87,11 +95,11 @@ enum Command {
         #[arg(long)]
         profile: String,
         #[arg(long)]
-        identity: PathBuf,
-        #[arg(long, default_value = host_env_vault::DEFAULT_STATE_DIR)]
-        state_dir: PathBuf,
+        identity: Option<PathBuf>,
         #[arg(long)]
-        runtime_dir: PathBuf,
+        state_dir: Option<PathBuf>,
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
     },
     /// Load local vault material into external tools.
     Hydrate {
@@ -106,6 +114,15 @@ enum SyncSource {
     Ssm,
     /// Local directory with `catalog.json` and `{profile}.env` files.
     Local,
+}
+
+impl From<SyncSource> for SyncSourceKind {
+    fn from(value: SyncSource) -> Self {
+        match value {
+            SyncSource::Ssm => SyncSourceKind::Ssm,
+            SyncSource::Local => SyncSourceKind::Local,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -146,7 +163,11 @@ fn map_cli_ssm(err: SsmError) -> host_env_vault::Error {
 }
 
 fn run() -> Result<(), host_env_vault::Error> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    let config_path = resolve_config_path(cli.config.clone());
+    let file_config = load_config(&config_path)?;
+
+    match cli.command {
         Command::Keygen { out } => {
             let kek = AgeKek::generate();
             kek.write_identity(&out)?;
@@ -181,30 +202,40 @@ fn run() -> Result<(), host_env_vault::Error> {
             s3_bucket,
             s3_prefix,
         } => {
-            let kek = host_env_vault::load_or_create_identity(&identity)?;
-            let mut table = SlotTable::new();
-            let mut options = host_env_vault::SyncOptions::new(
+            let resolved = file_config.resolve_sync(&SyncCliOverrides {
                 identity,
-                state_dir.clone(),
+                state_dir,
+                source: source.map(SyncSourceKind::from),
                 catalog_param,
                 secrets_prefix,
+                local_secrets_dir,
+                s3_bucket,
+                s3_prefix,
+            })?;
+            let kek = host_env_vault::load_or_create_identity(&resolved.identity)?;
+            let mut table = SlotTable::new();
+            let mut options = host_env_vault::SyncOptions::new(
+                resolved.identity.clone(),
+                resolved.state_dir.clone(),
+                resolved.catalog_param,
+                resolved.secrets_prefix,
             );
-            let aws_s3 = if let Some(bucket) = s3_bucket {
-                options = options.with_s3_prefix(s3_prefix.unwrap_or_default());
+            let aws_s3 = if let Some(bucket) = resolved.s3_bucket {
+                options = options.with_s3_prefix(resolved.s3_prefix.unwrap_or_default());
                 Some(AwsS3::from_env(bucket).map_err(map_cli_s3)?)
             } else {
                 None
             };
             let s3_port = aws_s3.as_ref().map(|client| client as &dyn S3Port);
-            match source {
-                SyncSource::Ssm => {
+            match resolved.source {
+                SyncSourceKind::Ssm => {
                     let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
                     host_env_vault::sync_from_ports(&ssm, s3_port, &kek, &mut table, &options)?;
                 }
-                SyncSource::Local => {
-                    let local_dir = local_secrets_dir.ok_or_else(|| {
+                SyncSourceKind::Local => {
+                    let local_dir = resolved.local_secrets_dir.ok_or_else(|| {
                         host_env_vault::Error::CatalogParse(
-                            "sync --source local requires --local-secrets-dir".into(),
+                            "sync --source local requires local_secrets_dir in config or --local-secrets-dir".into(),
                         )
                     })?;
                     host_env_vault::sync_from_local(
@@ -216,7 +247,7 @@ fn run() -> Result<(), host_env_vault::Error> {
                     )?;
                 }
             }
-            eprintln!("synced bundles into {}", state_dir.display());
+            eprintln!("synced bundles into {}", resolved.state_dir.display());
         }
         Command::FetchDocuments {
             profile,
@@ -241,6 +272,8 @@ fn run() -> Result<(), host_env_vault::Error> {
             dest,
             gid,
         } => {
+            let (identity, state_dir) =
+                file_config.resolve_render(&RenderCliOverrides { identity, state_dir })?;
             let kek = AgeKek::read_identity(&identity)?;
             let mut table = SlotTable::new();
             let options =
@@ -254,6 +287,11 @@ fn run() -> Result<(), host_env_vault::Error> {
             state_dir,
             runtime_dir,
         } => {
+            let (identity, state_dir, runtime_dir) = file_config.resolve_serve(&ServeCliOverrides {
+                identity,
+                state_dir,
+                runtime_dir,
+            })?;
             let kek = AgeKek::read_identity(&identity)?;
             let mut table = SlotTable::new();
             let options = host_env_vault::ServeOptions::new(

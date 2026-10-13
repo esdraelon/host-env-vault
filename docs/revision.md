@@ -117,6 +117,16 @@ local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
 - Precedence: CLI flags override file; file overrides defaults.
 - Single config path via `HOST_ENV_VAULT_CONFIG` or `--config`.
 
+- [x] **M12** `stack/m12-config-file` — TOML config file, merge precedence, CLI wiring.
+
+### M12 completion
+
+- Branch: `stack/m12-config-file`
+- Commit: `c64ed7e84f5edc907d928a00c97ccd392b7b68e0`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m12 cargo test` — **222** tests passed; `RUST_TEST_THREADS=1 CARGO_TARGET_DIR=/tmp/host-env-vault-target-m12 cargo mutants --file src/config/mod.rs` — **11/11 caught (100%)** on viable mutants (14 total, 3 unviable).
+- [`config`](src/config/mod.rs): load `/etc/host-env-vault/config.toml` or `HOST_ENV_VAULT_CONFIG` / `--config`; `[sync]` fields; merge helpers with CLI > file > defaults; `sync` / `render` / `serve` in [`main.rs`](src/main.rs) resolve paths from file when flags omitted; README configuration section.
+- Tests: `config/behavior_tests` (parse, load missing file, path resolution, sync/render/serve merge precedence).
+
 ## M13 — Neutral naming in tests and legacy cleanup
 
 - Replace `denarius-*` fixture profile names with `app-web`, `app-worker`, `edge-proxy`.
