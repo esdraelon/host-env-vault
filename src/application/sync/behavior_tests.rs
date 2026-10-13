@@ -9,7 +9,7 @@ use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::Kind;
-use crate::ports::{MemoryS3, MemorySsm, SsmError, SsmPort};
+use crate::ports::{MemoryS3, MemorySsm, SsmError, SsmPort, SsmSecretSource};
 use crate::vault::bundle::{open_bytes, seal_bytes, Entry};
 use crate::vault::kek::AgeKek;
 use zeroize::Zeroizing;
@@ -150,7 +150,12 @@ fn pull_from_ssm_does_not_occupy_sync_slot() {
     let catalog = parse_catalog_text(WEB_CATALOG).unwrap();
     let definition = catalog.profile("denarius-web").unwrap();
     let table = SlotTable::new();
-    super::pull_profile_entries(&ssm, DEFAULT_SECRETS_PREFIX, definition).unwrap();
+    let secrets = SsmSecretSource::new(
+        DEFAULT_CATALOG_PARAMETER,
+        DEFAULT_SECRETS_PREFIX,
+        &ssm,
+    );
+    super::pull_profile_entries(&secrets, definition).unwrap();
     assert!(!table.slot_ref(SYNC_SLOT_INDEX).unwrap().in_use());
     assert!(table
         .slot_ref(SYNC_SLOT_INDEX)

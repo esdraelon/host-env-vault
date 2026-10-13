@@ -15,7 +15,8 @@ use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::{valid_env_value, Kind};
 use crate::ports::s3::S3Port;
-use crate::ports::ssm::{SsmError, SsmPort};
+use crate::ports::secret_source::{SecretSource, SsmSecretSource};
+use crate::ports::ssm::SsmPort;
 use crate::vault::kek::AgeKek;
 use crate::vault::local_bundle::seal_profile_in_slot;
 
@@ -71,15 +72,7 @@ pub fn bundle_path(state_dir: &Path, profile_name: &str) -> PathBuf {
     state_dir.join(format!("{profile_name}.hev"))
 }
 
-/// SSM parameter path for one secret entry under a profile.
-pub fn ssm_entry_parameter(
-    secrets_prefix: &str,
-    profile_name: &str,
-    entry_name: &str,
-) -> String {
-    let prefix = secrets_prefix.trim_end_matches('/');
-    format!("{prefix}/{profile_name}/{entry_name}")
-}
+pub use crate::ports::secret_source::ssm_entry_parameter;
 
 /// Read the age identity or mint a new one on first sync.
 pub fn load_or_create_identity(path: &Path) -> Result<AgeKek, Error> {
@@ -114,7 +107,23 @@ pub fn sync_from_ports(
     table: &mut SlotTable,
     options: &SyncOptions,
 ) -> Result<(), Error> {
-    let catalog = pull_and_persist_catalog(ssm, &options.catalog_param, &options.state_dir)?;
+    let secrets = SsmSecretSource::new(
+        &options.catalog_param,
+        &options.secrets_prefix,
+        ssm,
+    );
+    sync_from_secret_source(&secrets, s3, kek, table, options)
+}
+
+/// Pull catalog and secrets from a [`SecretSource`] and optional S3 documents into local bundles.
+pub fn sync_from_secret_source(
+    secrets: &dyn SecretSource,
+    s3: Option<&dyn S3Port>,
+    kek: &AgeKek,
+    table: &mut SlotTable,
+    options: &SyncOptions,
+) -> Result<(), Error> {
+    let catalog = pull_and_persist_catalog(secrets, &options.state_dir)?;
     tracing::info!(
         target: "host_env_vault::application::sync",
         profile_count = catalog.profile_names().count(),
@@ -126,10 +135,9 @@ pub fn sync_from_ports(
     let mut failures = 0usize;
     for profile_name in names {
         match sync_one_profile(
-            ssm,
+            secrets,
             s3,
             options.s3_prefix.as_deref(),
-            &options.secrets_prefix,
             kek,
             table,
             &catalog,
@@ -155,10 +163,9 @@ pub fn sync_from_ports(
 }
 
 fn sync_one_profile(
-    ssm: &dyn SsmPort,
+    secrets: &dyn SecretSource,
     s3: Option<&dyn S3Port>,
     s3_prefix: Option<&str>,
-    secrets_prefix: &str,
     kek: &AgeKek,
     table: &mut SlotTable,
     catalog: &Catalog,
@@ -168,7 +175,7 @@ fn sync_one_profile(
     let definition = catalog
         .profile(profile_name)
         .ok_or_else(|| Error::NotInCatalog(profile_name.to_owned()))?;
-    let mut pulled = pull_profile_entries(ssm, secrets_prefix, definition)?;
+    let mut pulled = pull_profile_entries(secrets, definition)?;
     if let (Some(s3), Some(prefix)) = (s3, s3_prefix) {
         for doc in pull_profile_documents(s3, prefix, definition)? {
             pulled.push(PulledEntry {
@@ -210,15 +217,13 @@ struct PulledEntry {
 }
 
 fn pull_profile_entries(
-    ssm: &dyn SsmPort,
-    secrets_prefix: &str,
+    secrets: &dyn SecretSource,
     definition: &ProfileDefinition,
 ) -> Result<Vec<PulledEntry>, Error> {
     let mut entries = Vec::new();
     for name in definition.inject_env() {
         entries.push(fetch_pulled_entry(
-            ssm,
-            secrets_prefix,
+            secrets,
             &definition.name,
             name,
             Kind::Env,
@@ -226,8 +231,7 @@ fn pull_profile_entries(
     }
     for name in definition.runtime_env() {
         entries.push(fetch_pulled_entry(
-            ssm,
-            secrets_prefix,
+            secrets,
             &definition.name,
             name,
             Kind::Env,
@@ -235,8 +239,7 @@ fn pull_profile_entries(
     }
     for name in definition.inject_files() {
         entries.push(fetch_pulled_entry(
-            ssm,
-            secrets_prefix,
+            secrets,
             &definition.name,
             name,
             Kind::File,
@@ -244,8 +247,7 @@ fn pull_profile_entries(
     }
     for name in definition.runtime_files() {
         entries.push(fetch_pulled_entry(
-            ssm,
-            secrets_prefix,
+            secrets,
             &definition.name,
             name,
             Kind::File,
@@ -266,14 +268,12 @@ fn seal_entries_from_pulled(pulled: &[PulledEntry]) -> Vec<SealEntry<'_>> {
 }
 
 fn fetch_pulled_entry(
-    ssm: &dyn SsmPort,
-    secrets_prefix: &str,
+    secrets: &dyn SecretSource,
     profile_name: &str,
     entry_name: &str,
     kind: Kind,
 ) -> Result<PulledEntry, Error> {
-    let param = ssm_entry_parameter(secrets_prefix, profile_name, entry_name);
-    let text = ssm.get_parameter(&param).map_err(map_ssm)?;
+    let text = secrets.load_entry(profile_name, entry_name)?;
     let bytes = text.into_bytes();
     let max = match kind {
         Kind::Env => SECRET_MAX_BYTES,
@@ -313,20 +313,12 @@ fn write_bundle_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 }
 
 fn pull_and_persist_catalog(
-    ssm: &dyn SsmPort,
-    catalog_param: &str,
+    secrets: &dyn SecretSource,
     state_dir: &Path,
 ) -> Result<Catalog, Error> {
-    let text = ssm.get_parameter(catalog_param).map_err(map_ssm)?;
+    let text = secrets.load_catalog()?;
     write_catalog_snapshot(state_dir, &text)?;
     parse_catalog_text(&text)
-}
-
-fn map_ssm(err: SsmError) -> Error {
-    match err {
-        SsmError::NotFound(name) => Error::SsmMissing(name),
-        SsmError::Unavailable => Error::CatalogParse("ssm unavailable".into()),
-    }
 }
 
 fn map_slot_acquire(err: crate::core::slot::SlotError) -> Error {
@@ -350,12 +342,16 @@ pub fn sync_catalog_from_text(
     let mut names: Vec<_> = catalog.profile_names().collect();
     names.sort_unstable();
     let mut failures = 0usize;
+    let secrets = SsmSecretSource::new(
+        DEFAULT_CATALOG_PARAMETER,
+        secrets_prefix,
+        ssm,
+    );
     for profile_name in names {
         if sync_one_profile(
-            ssm,
+            &secrets,
             s3,
             s3_prefix,
-            secrets_prefix,
             kek,
             table,
             &catalog,

@@ -43,6 +43,16 @@ ports/secret_source.rs
 
 **Acceptance.** All existing sync tests pass; no behavior change for production SSM sync.
 
+- [x] **M10** `stack/m10-secret-source-port` — Secret source port; sync pulls catalog and entries through `SecretSource`.
+
+### M10 completion
+
+- Branch: `stack/m10-secret-source-port`
+- Commit: `9f31efbf17de1243219f141e509f3244fd5fe5e1`
+- Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m10 cargo test` (201 tests, full suite) — passed; line coverage **95.55%** on `src/` (`cargo llvm-cov --lib`, `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m10-cov`, `LLVM_COV` / `LLVM_PROFDATA` from Homebrew llvm); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m10-mutants cargo mutants --file src/ports/secret_source.rs --file src/application/sync/mod.rs` — **31/32 caught (96.9%)** on M10 scope (41 mutants, 9 unviable, 1 missed: `write_bundle_atomically` empty-parent guard).
+- [`SecretSource`](src/ports/secret_source.rs) + [`SsmSecretSource`](src/ports/secret_source.rs); [`sync_from_secret_source`](src/application/sync/mod.rs) drives catalog/entry fetch; [`sync_from_ports`](src/application/sync/mod.rs) / [`sync_from_ssm`](src/application/sync/mod.rs) wrap SSM for unchanged CLI; `ssm_entry_parameter` lives on the port module; unit tests on `SsmSecretSource` with [`MemorySsm`](src/ports/ssm.rs).
+- No new tracing branches; existing `sync` log_tests unchanged.
+
 ## M11 — Development mode (local `.env`)
 
 **Operator story.** On a laptop, create:
