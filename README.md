@@ -12,6 +12,17 @@ This is the workflow most operators care about: install once, sync on a schedule
 
 ### One-time setup
 
+**Recommended:** run the interactive wizard on the host (needs AWS CLI v2 and operator credentials with `ssm:PutParameter`):
+
+```bash
+./scripts/setup-profile.sh
+# optional install name: host-env-vault-setup
+```
+
+It ensures `host-env-vault` is on `PATH` (builds from this repo with `cargo` when needed), creates host directories, walks through AWS region/profile, catalog parameter and secrets prefix, defines your first profile, optionally uploads secret values, runs the first `sync`, and can invoke [`scripts/install-systemd.sh`](scripts/install-systemd.sh) when you are ready. Use `--non-interactive` with `HEV_SETUP_*` env vars for smoke tests ([`scripts/tests/run-setup-profile-smoke.sh`](scripts/tests/run-setup-profile-smoke.sh)).
+
+Manual steps below are equivalent if you prefer hand-editing SSM and JSON.
+
 1. **Build and install** the binary on the Linux host (see [Building](#building) at the bottom).
 
 2. **Create directories** (or use your own paths and pass flags every time):

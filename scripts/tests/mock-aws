@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Minimal aws stub for setup-profile.sh non-interactive tests.
+set -euo pipefail
+
+STATE_FILE="${MOCK_AWS_STATE:-/tmp/mock-aws-state.json}"
+
+save_param() {
+  local name="$1" value="$2"
+  python3 - "$STATE_FILE" "$name" "$value" <<'PY'
+import json, os, sys
+path, name, value = sys.argv[1], sys.argv[2], sys.argv[3]
+data = {}
+if os.path.isfile(path) and os.path.getsize(path) > 0:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+params = data.setdefault("parameters", {})
+params[name] = value
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+}
+
+get_param() {
+  local name="$1"
+  python3 - "$STATE_FILE" "$name" <<'PY'
+import json, os, sys
+path, name = sys.argv[1], sys.argv[2]
+if not os.path.isfile(path) or os.path.getsize(path) == 0:
+    sys.exit(1)
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+value = data.get("parameters", {}).get(name)
+if value is None:
+    sys.exit(1)
+print(value, end="")
+PY
+}
+
+if [[ "${1:-}" == "--version" ]]; then
+  echo 'aws-cli/2.0.0 mock'
+  exit 0
+fi
+
+service="${1:-}"
+shift || true
+
+case "$service" in
+  sts)
+    [[ "${1:-}" == "get-caller-identity" ]] || exit 2
+    printf '{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/mock","UserId":"MOCK"}\n'
+    ;;
+  ssm)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      get-parameter)
+        name="" output="json"
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --name)
+              name="$2"
+              shift 2
+              ;;
+            --output)
+              output="$2"
+              shift 2
+              ;;
+            --with-decryption | --query)
+              shift
+              [[ $# -gt 0 ]] && shift
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        [[ -n "$name" ]] || exit 2
+        value="$(get_param "$name")"
+        if [[ "$output" == "text" ]]; then
+          printf '%s' "$value"
+        else
+          printf '{"Parameter":{"Name":"%s","Value":%s}}\n' "$name" "$(python3 - "$value" <<'PY'
+import json, sys
+print(json.dumps(sys.argv[1]))
+PY
+)"
+        fi
+        ;;
+      put-parameter)
+        name="" value=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --name)
+              name="$2"
+              shift 2
+              ;;
+            --value)
+              value="$2"
+              shift 2
+              ;;
+            --type | --overwrite)
+              shift
+              [[ $# -gt 0 ]] && [[ "$1" != "--"* ]] && shift || true
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        [[ -n "$name" && -n "$value" ]] || exit 2
+        save_param "$name" "$value"
+        printf '{"Version":1}\n'
+        ;;
+      *)
+        echo "mock-aws: unsupported ssm subcommand: $sub" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  *)
+    echo "mock-aws: unsupported service: $service" >&2
+    exit 2
+    ;;
+esac

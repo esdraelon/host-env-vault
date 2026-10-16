@@ -267,6 +267,15 @@ Report success, bundle paths, and next steps:
 
 **Depends on.** Stable defaults (done); M10+ optional for local-only wizard path (M11: “dev profile” branch in wizard). M12 lets wizard write `/etc/host-env-vault/config.toml` for M15.
 
+- [x] **M16** `stack/m16-profile-wizard` — `scripts/setup-profile.sh` wizard for AWS catalog, secrets, and first sync.
+
+### M16 completion
+
+- Branch: `stack/m16-profile-wizard`
+- Commit: branch tip (`git log -1 --oneline` on `stack/m16-profile-wizard`)
+- Gates: `shellcheck scripts/setup-profile.sh scripts/tests/*.sh`; `./scripts/tests/run-setup-profile-smoke.sh`; `test ! -d /tmp/hev-target` (no Rust changes).
+- [`scripts/setup-profile.sh`](scripts/setup-profile.sh): phases A–E (binary/layout, AWS verify, interactive profile JSON merge to SSM catalog, optional `put-parameter` per entry, first `sync`, next steps, optional M15 installer). `--non-interactive` + `HEV_SETUP_*` env; `--dry-run` / `--skip-sync` / `--skip-layout`. [`scripts/tests/mock-aws`](scripts/tests/mock-aws) + [`run-setup-profile-smoke.sh`](scripts/tests/run-setup-profile-smoke.sh). README daily driver links wizard as recommended first-time path.
+
 ## Application examples (README)
 
 Delivered in README section **Using secrets in your app** (Python, PHP, TypeScript):
