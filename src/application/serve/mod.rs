@@ -367,7 +367,7 @@ mod unit_tests {
         "name": "app-worker",
         "inject": ["DB_PASS"],
         "runtime": ["APP_KEY"],
-        "runtime_files": ["teller.key"],
+        "runtime_files": ["client.key"],
         "socket": true,
         "require_uid": 33
       }]
@@ -424,7 +424,7 @@ mod unit_tests {
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
         ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/app-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/app-worker/client.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -449,7 +449,7 @@ mod unit_tests {
             "app-worker",
             &root,
             crate::legacy::serve::OP_FETCH_FILE,
-            b"teller.key",
+            b"client.key",
         );
         assert_eq!(resp.status, ST_OK);
         assert_eq!(&resp.body[..], b"file-data");
@@ -483,7 +483,7 @@ mod unit_tests {
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
         ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/app-worker/teller.key", "f");
+        ssm.put("/host-env-vault/app-worker/client.key", "f");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -545,9 +545,9 @@ mod unit_tests {
                 bytes: b"k",
             },
             SealEntry {
-                name: "teller.key".into(),
+                name: "client.key".into(),
                 kind: Kind::File,
-                bytes: b"teller-bytes",
+                bytes: b"client-bytes",
             },
         ];
         let slot = table.slot_ref_mut(0).unwrap();
@@ -564,10 +564,10 @@ mod unit_tests {
             "app-worker",
             &root,
             Kind::File,
-            "teller.key",
+            "client.key",
         )
         .unwrap();
-        assert_eq!(&file[..], b"teller-bytes");
+        assert_eq!(&file[..], b"client-bytes");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -615,7 +615,7 @@ mod unit_tests {
         ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
         ssm.put("/host-env-vault/app-worker/DB_PASS", "d");
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
-        ssm.put("/host-env-vault/app-worker/teller.key", "file-data");
+        ssm.put("/host-env-vault/app-worker/client.key", "file-data");
         let kek = AgeKek::generate();
         let mut table = SlotTable::new();
         sync_from_ssm(
@@ -718,7 +718,7 @@ mod unit_tests {
                 "app-worker",
                 &root,
                 Kind::Env,
-                "teller.key",
+                "client.key",
             ),
             Err(Error::EntryNotAllowed { .. })
         ));

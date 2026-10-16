@@ -25,7 +25,7 @@ const WEB_CATALOG: &str = r#"{
 const TWO_PROFILE_CATALOG: &str = r#"{
   "profiles": [
     {"name": "app-web", "inject": ["DB_PASS"], "runtime": []},
-    {"name": "edge-proxy", "inject": ["STRIPE_SECRET_KEY"], "runtime": []}
+    {"name": "edge-proxy", "inject": ["API_SECRET"], "runtime": []}
   ]
 }"#;
 
@@ -44,7 +44,7 @@ fn seed_web_ssm(ssm: &MemorySsm) {
 fn seed_two_profile_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, TWO_PROFILE_CATALOG);
     ssm.put("/host-env-vault/app-web/DB_PASS", "web-db");
-    ssm.put("/host-env-vault/edge-proxy/STRIPE_SECRET_KEY", "sk_live");
+    ssm.put("/host-env-vault/edge-proxy/API_SECRET", "sk_live");
 }
 
 #[test]
@@ -306,7 +306,7 @@ const FILE_CATALOG: &str = r#"{
     "name": "app-worker",
     "inject": [],
     "runtime": [],
-    "runtime_files": ["teller.key"]
+    "runtime_files": ["client.key"]
   }]
 }"#;
 
@@ -316,7 +316,7 @@ fn file_entries_skip_env_line_validation() {
     let _ = std::fs::remove_dir_all(&state_dir);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, FILE_CATALOG);
-    ssm.put("/host-env-vault/app-worker/teller.key", "line-one\nline-two");
+    ssm.put("/host-env-vault/app-worker/client.key", "line-one\nline-two");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {

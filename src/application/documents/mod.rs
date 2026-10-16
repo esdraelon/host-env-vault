@@ -236,7 +236,7 @@ mod unit_tests {
 
     #[test]
     fn secret_shaped_keys_include_key_material_extensions() {
-        assert!(is_secret_shaped_s3_key("teller.key"));
+        assert!(is_secret_shaped_s3_key("client.key"));
         assert!(is_secret_shaped_s3_key("nginx/oauth-private.key"));
         assert!(!is_secret_shaped_s3_key("nginx/site-a.conf"));
         assert!(!is_secret_shaped_s3_key("app.env"));

@@ -214,7 +214,7 @@ dev-secrets/
   app-web.env           # KEY=value lines for that profile
   app-worker.env
   files/                # optional file entries (see below)
-    teller.key
+    client.key
 ```
 
 Per-profile env files are named `{profile}.env`. **Env** catalog entries must appear as `NAME=value` (same rules as rendered `secrets.env`). **File** entries are resolved in order:

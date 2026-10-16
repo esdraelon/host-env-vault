@@ -83,7 +83,7 @@ impl ProfileId {
             ProfileId::AppWeb => Policy {
                 provisional: false,
                 runtime_key_wrap: false,
-                env: &["DB_PASS", "IDP_CLIENT_SECRET", "STRIPE_PUBLISHABLE_KEY"],
+                env: &["DB_PASS", "SESSION_SECRET", "OAUTH_CLIENT_SECRET"],
                 files: &[],
             },
             ProfileId::AppWorker => Policy {
@@ -91,48 +91,36 @@ impl ProfileId {
                 runtime_key_wrap: true,
                 env: &[
                     "APP_KEY",
+                    "API_SECRET",
                     "DB_PASS",
-                    "PLAID_SECRET",
-                    "SIMPLEFIN_APP_TOKEN",
-                    "STRIPE_SECRET_KEY",
-                    "STRIPE_WEBHOOK_SECRET",
-                    "TELLER_WEBHOOK_SECRET",
+                    "PROVIDER_TOKEN",
+                    "WEBHOOK_HMAC",
                 ],
-                files: &["teller.key", "teller.pem"],
+                files: &["client.key", "client.pem"],
             },
             ProfileId::EdgeProxy => Policy {
                 provisional: false,
                 runtime_key_wrap: false,
-                env: &["STRIPE_SECRET_KEY"],
+                env: &["API_SECRET"],
                 files: &[],
             },
-            // Legacy spike allowlist; catalog-driven sync supersedes for production.
-            // Overlap is explicit: both may still open the signing key.
             ProfileId::ApiHttp => Policy {
                 provisional: true,
                 runtime_key_wrap: false,
                 env: &[
-                    "AMAZON_SES_PASSWORD",
-                    "APP_SECRET",
-                    "AUTH_SERVER_DEFUSE_KEY",
                     "DB_PASS",
-                    "DISCORD_CLIENT_SECRET",
-                    "FACEBOOK_CLIENT_SECRET",
-                    "GOOGLE_CLIENT_SECRET",
-                    "IDP_ORK_SHARED_SECRET",
-                    "JWT_KEY",
-                    "MAILBOX_CODE_PEPPER",
+                    "DEFUSE_KEY",
                     "MANAGEMENT_KEY",
-                    "OAUTH_ENCRYPTION_KEY",
-                    "SENDGRID_API_KEY",
+                    "OAUTH_PRIVATE_KEY",
+                    "OAUTH_PUBLIC_KEY",
                 ],
-                files: &["apple.p8", "oauth-private.key"],
+                files: &["oauth-private.key", "oauth-public.key"],
             },
             ProfileId::ApiWorker => Policy {
                 provisional: true,
                 runtime_key_wrap: false,
-                env: &["DB_PASS", "JWT_KEY"],
-                files: &["oauth-private.key"],
+                env: &["DB_PASS"],
+                files: &[],
             },
         }
     }
@@ -140,11 +128,10 @@ impl ProfileId {
 
 impl Policy {
     pub fn allows(self, kind: Kind, name: &str) -> bool {
-        let names = match kind {
-            Kind::Env => self.env,
-            Kind::File => self.files,
-        };
-        names.contains(&name)
+        match kind {
+            Kind::Env => self.env.iter().any(|allowed| *allowed == name),
+            Kind::File => self.files.iter().any(|allowed| *allowed == name),
+        }
     }
 
     pub fn env_names(self) -> &'static [&'static str] {
@@ -157,26 +144,20 @@ impl Policy {
 }
 
 pub fn valid_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    if bytes.is_empty() || bytes.len() > 64 {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return false;
     }
-    let [first, rest @ ..] = bytes else {
-        return false;
-    };
-    first.is_ascii_alphanumeric()
-        && rest
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
-/// Single-line env values. `#` would become a dotenv comment. Newlines would
-/// break the file. File entries are raw bytes and use a different check.
-pub fn valid_env_value(value: &[u8]) -> bool {
-    !value.is_empty()
-        && value
-            .iter()
-            .all(|byte| byte.is_ascii() && *byte >= b' ' && *byte != b'#')
+pub fn valid_env_value(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || bytes[0] == b'#' {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_graphic() || *b == b' ')
 }
 
 #[cfg(test)]
@@ -184,24 +165,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_spike_profiles_do_not_share_stripe_secret_material() {
+    fn legacy_spike_profiles_separate_web_and_worker_secrets() {
         let web = ProfileId::AppWeb.policy();
         let worker = ProfileId::AppWorker.policy();
-        let connect = ProfileId::EdgeProxy.policy();
+        let edge = ProfileId::EdgeProxy.policy();
 
-        assert!(!web.allows(Kind::Env, "STRIPE_SECRET_KEY"));
+        assert!(!web.allows(Kind::Env, "API_SECRET"));
         assert!(!web.allows(Kind::Env, "APP_KEY"));
-        assert!(web.allows(Kind::Env, "STRIPE_PUBLISHABLE_KEY"));
+        assert!(web.allows(Kind::Env, "OAUTH_CLIENT_SECRET"));
 
-        assert!(worker.allows(Kind::Env, "STRIPE_SECRET_KEY"));
+        assert!(worker.allows(Kind::Env, "API_SECRET"));
         assert!(worker.allows(Kind::Env, "APP_KEY"));
-        assert!(!worker.allows(Kind::Env, "STRIPE_PUBLISHABLE_KEY"));
+        assert!(!worker.allows(Kind::Env, "OAUTH_CLIENT_SECRET"));
         assert!(worker.runtime_key_wrap);
         assert!(!web.runtime_key_wrap);
 
-        assert_eq!(connect.env_names(), &["STRIPE_SECRET_KEY"]);
-        assert!(connect.file_names().is_empty());
-        assert!(!connect.runtime_key_wrap);
+        assert_eq!(edge.env_names(), &["API_SECRET"]);
+        assert!(edge.file_names().is_empty());
+        assert!(!edge.runtime_key_wrap);
     }
 
     #[test]
@@ -214,23 +195,23 @@ mod tests {
     }
 
     #[test]
-    fn idp_allowlists_are_provisional_and_overlap_on_the_signing_key() {
+    fn api_profiles_are_provisional_and_share_oauth_files() {
         let http = ProfileId::ApiHttp.policy();
         let worker = ProfileId::ApiWorker.policy();
         assert!(http.provisional && worker.provisional);
         assert!(http.allows(Kind::File, "oauth-private.key"));
-        assert!(worker.allows(Kind::File, "oauth-private.key"));
-        assert!(http.allows(Kind::Env, "SENDGRID_API_KEY"));
-        assert!(!worker.allows(Kind::Env, "SENDGRID_API_KEY"));
+        assert!(http.allows(Kind::Env, "MANAGEMENT_KEY"));
+        assert!(!worker.allows(Kind::Env, "MANAGEMENT_KEY"));
+        assert!(worker.allows(Kind::Env, "DB_PASS"));
     }
 
     #[test]
     fn names_cannot_escape_the_dest_directory() {
-        assert!(!valid_name("../teller.key"));
-        assert!(!valid_name("teller/key"));
+        assert!(!valid_name("../client.key"));
+        assert!(!valid_name("client/key"));
         assert!(!valid_name(""));
-        assert!(valid_name("teller.key"));
-        assert!(valid_name("STRIPE_SECRET_KEY"));
+        assert!(valid_name("client.key"));
+        assert!(valid_name("API_SECRET"));
     }
 
     #[test]

@@ -231,7 +231,7 @@ Mutation command (library scope; `src/main.rs` excluded in `mutants.toml`). Pref
 
 ## Later
 
-- Trace which files the IDP HTTP process and `jwt-pvh-worker.php` open, then tighten those catalog entries.
+- Trace which files each production container opens, then tighten catalog entries to match.
 - `USER www-data` in the images, with the catalog gid and peer uid set to match.
 - A measured S3 lease, if 2000 ms is too short for document loads.
 - A customer-managed KMS key, if another principal in the account must be unable to decrypt these parameters.

@@ -298,10 +298,10 @@ mod tests {
         let text = r#"{
           "profiles": [{
             "name": "app-worker",
-            "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
-            "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
+            "inject": ["DB_PASS", "WEBHOOK_HMAC"],
+            "runtime": ["APP_KEY", "API_SECRET"],
             "inject_files": [],
-            "runtime_files": ["teller.key", "teller.pem"],
+            "runtime_files": ["client.key", "client.pem"],
             "socket": true,
             "require_uid": 33,
             "gid": 1000,
@@ -317,8 +317,8 @@ mod tests {
         assert!(!worker.allows_serve(Kind::Env, "DB_PASS"));
         assert!(worker.allows_inject(Kind::Env, "DB_PASS"));
         assert!(!worker.allows_inject(Kind::Env, "APP_KEY"));
-        assert!(!worker.allows_inject(Kind::File, "teller.key"));
-        assert!(!worker.allows_inject(Kind::File, "teller.pem"));
+        assert!(!worker.allows_inject(Kind::File, "client.key"));
+        assert!(!worker.allows_inject(Kind::File, "client.pem"));
     }
 
     #[test]

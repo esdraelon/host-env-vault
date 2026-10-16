@@ -10,9 +10,9 @@ use std::time::Instant;
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
     "name": "app-worker",
-    "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
-    "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
-    "runtime_files": ["teller.key"],
+    "inject": ["DB_PASS", "WEBHOOK_HMAC"],
+    "runtime": ["APP_KEY", "API_SECRET"],
+    "runtime_files": ["client.key"],
     "socket": true,
     "require_uid": 33
   }]
@@ -26,7 +26,7 @@ fn worker_entries() -> Vec<SealEntry<'static>> {
             bytes: b"db-secret",
         },
         SealEntry {
-            name: "STRIPE_WEBHOOK_SECRET".into(),
+            name: "WEBHOOK_HMAC".into(),
             kind: Kind::Env,
             bytes: b"whsec",
         },
@@ -116,7 +116,7 @@ fn open_refuses_entry_outside_catalog_allowlist() {
     let bundle = crate::seal_bytes(
         "app-worker",
         vec![crate::Entry {
-            name: "STRIPE_PUBLISHABLE_KEY".into(),
+            name: "PUBLIC_API_KEY".into(),
             kind: Kind::Env,
             bytes: zeroize::Zeroizing::new(b"pk".to_vec()),
         }],
@@ -140,7 +140,7 @@ fn seal_and_open_includes_runtime_file_in_slot() {
     let lease = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
     let entries = vec![SealEntry {
-        name: "teller.key".into(),
+        name: "client.key".into(),
         kind: Kind::File,
         bytes: b"-----BEGIN KEY-----",
     }];
@@ -163,7 +163,7 @@ fn catalog_refuses_disallowed_entry_on_seal() {
     let lease = table.try_acquire(0, Instant::now()).unwrap();
     let slot = table.slot_ref_mut(0).unwrap();
     let entries = vec![SealEntry {
-        name: "STRIPE_PUBLISHABLE_KEY".into(),
+        name: "PUBLIC_API_KEY".into(),
         kind: Kind::Env,
         bytes: b"pk",
     }];
@@ -240,7 +240,7 @@ fn only_one_profile_occupies_slot_between_seals() {
     let catalog = parse_catalog_text(
         r#"{"profiles":[
           {"name":"app-web","inject":["DB_PASS"],"runtime":[]},
-          {"name":"edge-proxy","inject":["STRIPE_SECRET_KEY"],"runtime":[]}
+          {"name":"edge-proxy","inject":["API_SECRET"],"runtime":[]}
         ]}"#,
     )
     .unwrap();
@@ -272,7 +272,7 @@ fn only_one_profile_occupies_slot_between_seals() {
         lease,
         "edge-proxy",
         &[SealEntry {
-            name: "STRIPE_SECRET_KEY".into(),
+            name: "API_SECRET".into(),
             kind: Kind::Env,
             bytes: b"sk",
         }],
