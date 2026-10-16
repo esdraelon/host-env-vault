@@ -22,10 +22,15 @@ This is the workflow most operators care about: install once, sync on a schedule
    sudo install -d -m 0700 /run/host-env-vault
    ```
 
-3. **AWS** — On the host, use an instance role (recommended) or export credentials for manual runs. Set region:
+3. **AWS** — On the host, use an instance role (recommended) or export credentials for manual runs. Set region in `/etc/host-env-vault/env` (loaded by the systemd units) or export it for manual CLI runs:
 
    ```bash
-   export AWS_REGION=us-east-1
+   sudo tee /etc/host-env-vault/env <<'EOF'
+   AWS_REGION=us-east-1
+   # Optional when not using the default path:
+   # HOST_ENV_VAULT_CONFIG=/etc/host-env-vault/config.toml
+   EOF
+   sudo chmod 0600 /etc/host-env-vault/env
    ```
 
 4. **Parameter Store** — Put your [profile catalog](#4-configuring-profiles) at `/host-env-vault/profiles` (or another name with `--catalog-param`). For each secret entry, create a **SecureString** at:
@@ -44,7 +49,7 @@ This is the workflow most operators care about: install once, sync on a schedule
      --state-dir /var/lib/host-env-vault
    ```
 
-6. **Socket profiles** — Start one `serve` process per profile that has `socket: true` (see [systemd example](#systemd-sketch) below).
+6. **Socket profiles** — Start one `serve` process per profile that has `socket: true` (see [systemd units](#systemd-units) below).
 
 ### Typical day
 
@@ -145,41 +150,25 @@ For a runtime profile, mount only the socket:
 
 Map container user id to the catalog `require_uid` for that profile.
 
-### systemd sketch
+### systemd units
 
-**Timer — sync hourly**
+Maintained templates live under [`packaging/systemd/`](packaging/systemd/):
 
-```ini
-# /etc/systemd/system/host-env-vault-sync.service
-[Service]
-Type=oneshot
-Environment=AWS_REGION=us-east-1
-ExecStart=/usr/local/bin/host-env-vault sync \
-  --identity /etc/host-env-vault/kek.age \
-  --state-dir /var/lib/host-env-vault
+| File | Role |
+| --- | --- |
+| [`host-env-vault-sync.service`](packaging/systemd/host-env-vault-sync.service) | Oneshot `sync` (paths from [`config.toml`](#configuration-file); default `/etc/host-env-vault/config.toml`) |
+| [`host-env-vault-sync.timer`](packaging/systemd/host-env-vault-sync.timer) | Hourly sync trigger |
+| [`host-env-vault-serve@.service`](packaging/systemd/host-env-vault-serve@.service) | Template: `serve --profile %i` |
 
-# /etc/systemd/system/host-env-vault-sync.timer
-[Timer]
-OnCalendar=hourly
-Persistent=true
+Copy into `/etc/systemd/system/`, set `AWS_REGION` (and optional `HOST_ENV_VAULT_CONFIG`) in `/etc/host-env-vault/env`, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now host-env-vault-sync.timer
+sudo systemctl enable --now host-env-vault-serve@app-worker.service
 ```
 
-**Service — one runtime profile**
-
-```ini
-# /etc/systemd/system/host-env-vault-serve@app-worker.service
-[Service]
-ExecStart=/usr/local/bin/host-env-vault serve \
-  --profile %i \
-  --identity /etc/host-env-vault/kek.age \
-  --state-dir /var/lib/host-env-vault \
-  --runtime-dir /run/host-env-vault
-Restart=always
-```
-
-Enable with `systemctl enable --now host-env-vault-serve@app-worker.service`.
-
-Example unit files also live under `packaging/`; adjust profile names and paths to match your host.
+Adjust the `@` instance name to each catalog profile with `socket: true`. M15 adds an installer that copies these files and enables instances for you.
 
 ### Local development
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic host-env-vault sync
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=host-env-vault-sync.service
+
+[Install]
+WantedBy=timers.target

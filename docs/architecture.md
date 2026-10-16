@@ -22,7 +22,7 @@ src/
   adapters/              AWS SDK and process `gh` (binary-only)
   testing/               log capture, mutation closeout (#[cfg(test)])
 
-packaging/               systemd unit
+packaging/systemd/       systemd unit templates
 docs/plan.md             milestones and product plan
 ```
 

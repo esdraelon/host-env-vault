@@ -1,11 +1,14 @@
 [Unit]
-Description=Host env vault runtime key wrap
-Before=docker.service
+Description=Runtime secrets socket for host-env-vault profile %i
+Documentation=man:host-env-vault(1)
 After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/host-env-vault serve --identity /etc/host-env-vault/kek.age --state-dir /var/lib/host-env-vault --runtime-dir /run/host-env-vault --poll-secs 3600
+EnvironmentFile=-/etc/host-env-vault/env
+ExecStart=/usr/local/bin/host-env-vault serve --profile %i
+Restart=on-failure
+RestartSec=5s
 RuntimeDirectory=host-env-vault
 StateDirectory=host-env-vault
 ConfigurationDirectory=host-env-vault

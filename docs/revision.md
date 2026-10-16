@@ -138,7 +138,7 @@ local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
 ### M13 completion
 
 - Branch: `stack/m13-neutral-fixtures`
-- Commit: `9a7c27b4c5fed9d1dfc40b51aeaba0cb0ec7cbc5`
+- Commit: `3271745`
 - Gates: `./scripts/gate.sh test` — **225** tests passed; per-file `./scripts/gate.sh mutants -- --file …` on all touched `.rs` modules — **311/357 caught (87.1%)** on viable mutants (44 unviable; `catalog/load.rs` and `testing/mutation_closeout.rs` have no production mutants in scope).
 - Catalog-driven tests use `app-web`, `app-worker`, and `edge-proxy` instead of `denarius-*`; GitHub hydrate tests use generic `gh-user-alpha` / `gh-user-beta`; [`Cargo.toml`](Cargo.toml) description and [`legacy/profile`](src/legacy/profile.rs) docs no longer name a specific product. Legacy [`ProfileId`](src/legacy/profile.rs) enum variants kept; `as_str()` aligned to neutral names; `hydrate gh` / `seal` CLI generalization deferred to a later milestone.
 
@@ -157,6 +157,15 @@ Ship maintained templates under `packaging/systemd/` (not a live install yet):
 - README daily-driver section references these filenames.
 
 **Acceptance.** Templates pass `systemd-analyze verify` when installed on a Linux host; no behavior change to the Rust binary.
+
+- [x] **M14** `stack/m14-systemd-templates` — systemd unit templates under `packaging/systemd/`.
+
+### M14 completion
+
+- Branch: `stack/m14-systemd-templates`
+- Commit: `4b85620`
+- Gates: no Rust changes; `systemd-analyze verify packaging/systemd/*.service` — **skipped on macOS** (`systemd-analyze` not installed); run on Linux after copy to `/etc/systemd/system/` per acceptance above.
+- Added [`host-env-vault-sync.service`](packaging/systemd/host-env-vault-sync.service), [`host-env-vault-sync.timer`](packaging/systemd/host-env-vault-sync.timer), [`host-env-vault-serve@.service`](packaging/systemd/host-env-vault-serve@.service): `EnvironmentFile=-/etc/host-env-vault/env`, `ExecStart` uses current CLI (`sync`; `serve --profile %i`) with paths from default/`HOST_ENV_VAULT_CONFIG` config file (M12). Removed stale [`packaging/host-env-vault.service`](packaging/host-env-vault.service). README daily driver points at `packaging/systemd/` filenames.
 
 ## M15 — systemd service installer
 
