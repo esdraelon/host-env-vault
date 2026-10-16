@@ -186,6 +186,15 @@ Ship maintained templates under `packaging/systemd/` (not a live install yet):
 
 **Depends on.** M14 templates; M12 recommended so installer reads one config file instead of many flags.
 
+- [x] **M15** `stack/m15-systemd-installer` — `scripts/install-systemd.sh` copies units, enables timer and serve@ instances.
+
+### M15 completion
+
+- Branch: `stack/m15-systemd-installer`
+- Commit: branch tip (`git log -1 --oneline` on `stack/m15-systemd-installer`)
+- Gates: `shellcheck scripts/install-systemd.sh`; `./scripts/install-systemd.sh --dry-run --binary /bin/sh --profile app-worker`; `test ! -d /tmp/hev-target` (no Rust changes).
+- [`scripts/install-systemd.sh`](scripts/install-systemd.sh): root preflight, `--dry-run`, `--uninstall`, path/binary substitution from config or flags, sync timer enable, serve@ from `catalog.json` snapshot or `--profile`. README systemd section documents installer and manual QA checklist (fresh VM → binary → installer → timer active → optional serve@).
+
 ## M16 — Profile setup wizard (shell)
 
 **Deliverable.** `scripts/setup-profile.sh` (invoked as `./scripts/setup-profile.sh` or installed as `host-env-vault-setup`).

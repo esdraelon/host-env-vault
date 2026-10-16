@@ -160,7 +160,28 @@ Maintained templates live under [`packaging/systemd/`](packaging/systemd/):
 | [`host-env-vault-sync.timer`](packaging/systemd/host-env-vault-sync.timer) | Hourly sync trigger |
 | [`host-env-vault-serve@.service`](packaging/systemd/host-env-vault-serve@.service) | Template: `serve --profile %i` |
 
-Copy into `/etc/systemd/system/`, set `AWS_REGION` (and optional `HOST_ENV_VAULT_CONFIG`) in `/etc/host-env-vault/env`, then:
+**Installer (recommended on Linux hosts):**
+
+```bash
+sudo ./scripts/install-systemd.sh
+```
+
+The installer (run as root) checks for `systemd` and `host-env-vault` on `PATH` (override with `--binary`), creates `/etc/host-env-vault/config.toml` and `env` when missing, copies [`packaging/systemd/`](packaging/systemd/) into `/etc/systemd/system/` with the detected binary path and your config paths, runs `daemon-reload`, enables `host-env-vault-sync.timer` (default `OnCalendar=hourly`; pass `--on-calendar daily`), and enables `host-env-vault-serve@<profile>.service` for each catalog profile with `socket: true` in `state_dir/catalog.json` (after at least one sync) plus any `--profile` names.
+
+Preview without writing:
+
+```bash
+./scripts/install-systemd.sh --dry-run --binary ./target/release/host-env-vault \
+  --profile app-worker
+```
+
+Remove units (leaves `/etc/host-env-vault/` config in place):
+
+```bash
+sudo ./scripts/install-systemd.sh --uninstall
+```
+
+**Manual install** — copy into `/etc/systemd/system/`, set `AWS_REGION` (and optional `HOST_ENV_VAULT_CONFIG`) in `/etc/host-env-vault/env`, then:
 
 ```bash
 sudo systemctl daemon-reload
@@ -168,7 +189,7 @@ sudo systemctl enable --now host-env-vault-sync.timer
 sudo systemctl enable --now host-env-vault-serve@app-worker.service
 ```
 
-Adjust the `@` instance name to each catalog profile with `socket: true`. M15 adds an installer that copies these files and enables instances for you.
+Adjust the `@` instance name to each catalog profile with `socket: true`.
 
 ### Local development
 
