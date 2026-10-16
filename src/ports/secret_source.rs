@@ -244,11 +244,11 @@ mod tests {
         fs::create_dir_all(root.join("files")).unwrap();
         fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
         fs::write(root.join("app-web.env"), "\n").unwrap();
-        fs::write(root.join("files/teller.key"), "teller-bytes").unwrap();
+        fs::write(root.join("files/client.key"), "client-bytes").unwrap();
         let source = LocalSecretSource::new(&root);
         assert_eq!(
-            source.load_entry("app-web", "teller.key").unwrap(),
-            "teller-bytes"
+            source.load_entry("app-web", "client.key").unwrap(),
+            "client-bytes"
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -261,13 +261,13 @@ mod tests {
         fs::write(root.join(LOCAL_CATALOG_FILE), "{}").unwrap();
         fs::write(
             root.join("app-web.env"),
-            "teller.key=@certs/teller.pem\n",
+            "client.key=@certs/client.pem\n",
         )
         .unwrap();
-        fs::write(root.join("certs/teller.pem"), "pem-bytes").unwrap();
+        fs::write(root.join("certs/client.pem"), "pem-bytes").unwrap();
         let source = LocalSecretSource::new(&root);
         assert_eq!(
-            source.load_entry("app-web", "teller.key").unwrap(),
+            source.load_entry("app-web", "client.key").unwrap(),
             "pem-bytes"
         );
         let _ = fs::remove_dir_all(&root);

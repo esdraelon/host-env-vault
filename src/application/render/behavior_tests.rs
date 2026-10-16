@@ -16,10 +16,10 @@ use crate::vault::kek::AgeKek;
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
     "name": "app-worker",
-    "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
-    "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
+    "inject": ["DB_PASS", "WEBHOOK_HMAC"],
+    "runtime": ["APP_KEY", "API_SECRET"],
     "inject_files": [],
-    "runtime_files": ["teller.key"]
+    "runtime_files": ["client.key"]
   }]
 }"#;
 
@@ -40,10 +40,10 @@ fn mode_of(path: &std::path::Path) -> u32 {
 fn seed_worker_ssm(ssm: &MemorySsm) {
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER_CATALOG);
     ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
-    ssm.put("/host-env-vault/app-worker/STRIPE_WEBHOOK_SECRET", "whsec");
+    ssm.put("/host-env-vault/app-worker/WEBHOOK_HMAC", "whsec");
     ssm.put("/host-env-vault/app-worker/APP_KEY", "app-key");
-    ssm.put("/host-env-vault/app-worker/STRIPE_SECRET_KEY", "sk");
-    ssm.put("/host-env-vault/app-worker/teller.key", "teller-bytes");
+    ssm.put("/host-env-vault/app-worker/API_SECRET", "sk");
+    ssm.put("/host-env-vault/app-worker/client.key", "client-bytes");
 }
 
 #[test]
@@ -84,9 +84,9 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
     assert!(!dest.join("files").exists());
     let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
     assert!(env.contains("DB_PASS=db\n"));
-    assert!(env.contains("STRIPE_WEBHOOK_SECRET=whsec\n"));
+    assert!(env.contains("WEBHOOK_HMAC=whsec\n"));
     assert!(!env.contains("APP_KEY"));
-    assert!(!env.contains("STRIPE_SECRET_KEY"));
+    assert!(!env.contains("API_SECRET"));
     assert!(!table.slot_ref(RENDER_SLOT_INDEX).unwrap().in_use());
     assert!(table
         .slot_ref(SYNC_SLOT_INDEX)

@@ -378,7 +378,7 @@ mod tests {
             ProfileId::AppWeb,
             vec![
                 env("DB_PASS", "db-secret"),
-                env("IDP_CLIENT_SECRET", "idp-secret"),
+                env("OAUTH_CLIENT_SECRET", "oauth-secret"),
             ],
             &kek,
         )
@@ -391,11 +391,11 @@ mod tests {
     }
 
     #[test]
-    fn web_profile_rejects_the_stripe_secret_key() {
+    fn web_profile_rejects_worker_only_api_secret() {
         let kek = kek();
         let err = seal(
             ProfileId::AppWeb,
-            vec![env("STRIPE_SECRET_KEY", "sk_live_nope")],
+            vec![env("API_SECRET", "sk_live_nope")],
             &kek,
         )
         .unwrap_err();
@@ -407,7 +407,7 @@ mod tests {
         let kek = kek();
         let mut bundle = seal(
             ProfileId::EdgeProxy,
-            vec![env("STRIPE_SECRET_KEY", "sk_connect")],
+            vec![env("API_SECRET", "sk-edge")],
             &kek,
         )
         .unwrap();

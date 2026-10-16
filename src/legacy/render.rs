@@ -210,14 +210,14 @@ mod tests {
             &dest,
             &[
                 entry(Kind::Env, "DB_PASS", "s3cret"),
-                entry(Kind::File, "teller.key", "key-bytes"),
+                entry(Kind::File, "client.key", "key-bytes"),
             ],
             RenderMode::from_gid(None),
         )
         .unwrap();
         assert_eq!(mode_of(&dest), 0o700);
         assert_eq!(mode_of(&dest.join("secrets.env")), 0o400);
-        assert_eq!(mode_of(&dest.join("files").join("teller.key")), 0o400);
+        assert_eq!(mode_of(&dest.join("files").join("client.key")), 0o400);
         let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
         assert_eq!(env, "DB_PASS=s3cret\n");
         assert!(render(
@@ -245,7 +245,7 @@ mod tests {
             &dest,
             &[
                 entry(Kind::Env, "DB_PASS", "pw"),
-                entry(Kind::File, "teller.key", "pem"),
+                entry(Kind::File, "client.key", "pem"),
             ],
             RenderMode::from_gid(None),
         )
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "DB_PASS");
         assert_eq!(&entries[0].bytes[..], b"pw");
-        assert_eq!(entries[1].name, "teller.key");
+        assert_eq!(entries[1].name, "client.key");
         fs::remove_dir_all(dest).unwrap();
     }
 

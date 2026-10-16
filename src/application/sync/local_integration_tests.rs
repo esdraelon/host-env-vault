@@ -15,10 +15,10 @@ use crate::vault::kek::AgeKek;
 const APP_CATALOG: &str = r#"{
   "profiles": [{
     "name": "app-web",
-    "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
+    "inject": ["DB_PASS", "WEBHOOK_HMAC"],
     "runtime": ["APP_KEY"],
     "inject_files": [],
-    "runtime_files": ["teller.key"],
+    "runtime_files": ["client.key"],
     "socket": true,
     "require_uid": 0
   }]
@@ -39,10 +39,10 @@ fn seed_local_secrets(root: &PathBuf) {
     fs::write(root.join(LOCAL_CATALOG_FILE), APP_CATALOG).unwrap();
     fs::write(
         root.join("app-web.env"),
-        "DB_PASS=db-local\nSTRIPE_WEBHOOK_SECRET=whsec-local\nAPP_KEY=app-key-local\n",
+        "DB_PASS=db-local\nWEBHOOK_HMAC=whsec-local\nAPP_KEY=app-key-local\n",
     )
     .unwrap();
-    fs::write(root.join("files/teller.key"), "teller-local-bytes").unwrap();
+    fs::write(root.join("files/client.key"), "client-local-bytes").unwrap();
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn local_sync_render_and_serve_without_aws() {
     render_from_vault(&kek, &mut table, "app-web", &render_options).unwrap();
     let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
     assert!(env.contains("DB_PASS=db-local\n"));
-    assert!(env.contains("STRIPE_WEBHOOK_SECRET=whsec-local\n"));
+    assert!(env.contains("WEBHOOK_HMAC=whsec-local\n"));
     assert!(!env.contains("APP_KEY"));
 
     let uid = unsafe { libc::getuid() };

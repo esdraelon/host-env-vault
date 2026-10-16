@@ -11,9 +11,9 @@ use std::time::Instant;
 const WORKER_CATALOG: &str = r#"{
   "profiles": [{
     "name": "app-worker",
-    "inject": ["DB_PASS", "STRIPE_WEBHOOK_SECRET"],
-    "runtime": ["APP_KEY", "STRIPE_SECRET_KEY"],
-    "runtime_files": ["teller.key"],
+    "inject": ["DB_PASS", "WEBHOOK_HMAC"],
+    "runtime": ["APP_KEY", "API_SECRET"],
+    "runtime_files": ["client.key"],
     "socket": true,
     "require_uid": 33
   }]
@@ -23,7 +23,7 @@ const WORKER_CATALOG: &str = r#"{
 fn entry_outside_catalog_is_refused_on_seal() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
     let entries = vec![SealEntry {
-        name: "STRIPE_PUBLISHABLE_KEY".into(),
+        name: "PUBLIC_API_KEY".into(),
         kind: Kind::Env,
         bytes: b"pk_test",
     }];
@@ -175,10 +175,10 @@ fn runtime_file_seals_without_inject_files() {
     let catalog = parse_catalog_text(WORKER_CATALOG).unwrap();
     let worker = catalog.profile("app-worker").unwrap();
     assert!(worker.inject_files().is_empty());
-    assert_eq!(worker.runtime_files(), &["teller.key"]);
-    assert!(worker.allows_seal(Kind::File, "teller.key"));
+    assert_eq!(worker.runtime_files(), &["client.key"]);
+    assert!(worker.allows_seal(Kind::File, "client.key"));
     let entries = vec![SealEntry {
-        name: "teller.key".into(),
+        name: "client.key".into(),
         kind: Kind::File,
         bytes: b"pem-bytes",
     }];
@@ -191,10 +191,10 @@ fn catalog_lists_env_and_file_slices_from_parse() {
     let names: Vec<_> = catalog.profile_names().collect();
     assert_eq!(names, vec!["app-worker"]);
     let worker = catalog.profile("app-worker").unwrap();
-    assert_eq!(worker.inject_env(), &["DB_PASS", "STRIPE_WEBHOOK_SECRET"]);
-    assert_eq!(worker.runtime_env(), &["APP_KEY", "STRIPE_SECRET_KEY"]);
+    assert_eq!(worker.inject_env(), &["DB_PASS", "WEBHOOK_HMAC"]);
+    assert_eq!(worker.runtime_env(), &["APP_KEY", "API_SECRET"]);
     assert!(worker.inject_files().is_empty());
-    assert_eq!(worker.runtime_files(), &["teller.key"]);
+    assert_eq!(worker.runtime_files(), &["client.key"]);
 
     let with_inject_files = parse_catalog_text(
         r#"{"profiles":[{"name":"p","inject":[],"runtime":[],"inject_files":["a.pem"],"runtime_files":[]}]}"#,
