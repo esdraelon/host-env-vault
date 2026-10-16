@@ -1,0 +1,22 @@
+[Unit]
+Description=Runtime secrets socket for host-env-vault profile %i
+Documentation=man:host-env-vault(1)
+After=local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/host-env-vault/env
+ExecStart=/usr/local/bin/host-env-vault serve --profile %i
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=host-env-vault
+StateDirectory=host-env-vault
+ConfigurationDirectory=host-env-vault
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/host-env-vault
+
+[Install]
+WantedBy=multi-user.target

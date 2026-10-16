@@ -1,0 +1,13 @@
+# Copy to host-config.toml (gitignored) and replace the placeholder root with your checkout.
+# Paths must be absolute when HOST_ENV_VAULT_CONFIG is set from another repo (render/serve cwd).
+# Prefer: ./scripts/local-shared-bootstrap.sh (writes absolute paths automatically).
+
+identity = "/path/to/host-env-vault/dev-shared/kek.age"
+state_dir = "/path/to/host-env-vault/dev-shared/state"
+runtime_dir = "/path/to/host-env-vault/dev-shared/run"
+
+[sync]
+source = "local"
+local_secrets_dir = "/path/to/host-env-vault/dev-shared/secrets"
+catalog_param = "/host-env-vault/profiles"
+secrets_prefix = "/host-env-vault"

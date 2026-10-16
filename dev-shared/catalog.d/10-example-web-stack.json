@@ -1,0 +1,32 @@
+{
+  "profiles": [
+    {
+      "name": "app-web",
+      "inject": ["DB_PASS", "SESSION_SECRET", "OAUTH_CLIENT_SECRET"],
+      "runtime": [],
+      "inject_files": [],
+      "runtime_files": [],
+      "socket": false,
+      "gid": 33
+    },
+    {
+      "name": "app-worker",
+      "inject": ["DB_PASS", "WEBHOOK_HMAC"],
+      "runtime": ["APP_KEY", "API_SECRET", "PROVIDER_TOKEN"],
+      "inject_files": [],
+      "runtime_files": ["client.key", "client.pem"],
+      "socket": true,
+      "require_uid": 33,
+      "gid": 33
+    },
+    {
+      "name": "edge-proxy",
+      "inject": ["API_SECRET"],
+      "runtime": [],
+      "inject_files": [],
+      "runtime_files": [],
+      "socket": false,
+      "gid": 33
+    }
+  ]
+}

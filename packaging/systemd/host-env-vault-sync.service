@@ -1,0 +1,16 @@
+[Unit]
+Description=Refresh host-env-vault sealed bundles from the configured secret source
+Documentation=man:host-env-vault(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/host-env-vault/env
+ExecStart=/usr/local/bin/host-env-vault sync
+StateDirectory=host-env-vault
+ConfigurationDirectory=host-env-vault
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
