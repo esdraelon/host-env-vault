@@ -204,8 +204,8 @@ mod unit_tests {
     #[test]
     fn nginx_object_key_maps_to_site_conf_slot_name() {
         assert_eq!(
-            document_slot_name("nginx/amtgard.conf").unwrap(),
-            "amtgard.conf"
+            document_slot_name("nginx/site-a.conf").unwrap(),
+            "site-a.conf"
         );
     }
 
@@ -238,7 +238,7 @@ mod unit_tests {
     fn secret_shaped_keys_include_key_material_extensions() {
         assert!(is_secret_shaped_s3_key("teller.key"));
         assert!(is_secret_shaped_s3_key("nginx/oauth-private.key"));
-        assert!(!is_secret_shaped_s3_key("nginx/amtgard.conf"));
+        assert!(!is_secret_shaped_s3_key("nginx/site-a.conf"));
         assert!(!is_secret_shaped_s3_key("app.env"));
         assert!(is_secret_shaped_s3_key("backup_api_key.env"));
         assert!(is_secret_shaped_s3_key("tls.pem"));

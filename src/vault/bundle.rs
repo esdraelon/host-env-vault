@@ -375,7 +375,7 @@ mod tests {
     fn round_trip_keeps_allowlisted_entries() {
         let kek = kek();
         let bundle = seal(
-            ProfileId::DenariusWeb,
+            ProfileId::AppWeb,
             vec![
                 env("DB_PASS", "db-secret"),
                 env("IDP_CLIENT_SECRET", "idp-secret"),
@@ -394,7 +394,7 @@ mod tests {
     fn web_profile_rejects_the_stripe_secret_key() {
         let kek = kek();
         let err = seal(
-            ProfileId::DenariusWeb,
+            ProfileId::AppWeb,
             vec![env("STRIPE_SECRET_KEY", "sk_live_nope")],
             &kek,
         )
@@ -406,7 +406,7 @@ mod tests {
     fn tampered_ciphertext_does_not_open() {
         let kek = kek();
         let mut bundle = seal(
-            ProfileId::DenariusConnect,
+            ProfileId::EdgeProxy,
             vec![env("STRIPE_SECRET_KEY", "sk_connect")],
             &kek,
         )
@@ -420,7 +420,7 @@ mod tests {
     fn relabeled_header_does_not_decrypt() {
         let kek = kek();
         let bundle = seal(
-            ProfileId::DenariusWeb,
+            ProfileId::AppWeb,
             vec![env("DB_PASS", "db-secret")],
             &kek,
         )
@@ -440,16 +440,16 @@ mod tests {
     fn seal_rejects_empty_duplicate_and_invalid_entries() {
         let kek = kek();
         assert!(matches!(
-            seal(ProfileId::DenariusWeb, vec![], &kek),
+            seal(ProfileId::AppWeb, vec![], &kek),
             Err(Error::EmptyBundle)
         ));
         assert!(matches!(
-            seal(ProfileId::DenariusWeb, vec![env("bad name", "x")], &kek),
+            seal(ProfileId::AppWeb, vec![env("bad name", "x")], &kek),
             Err(Error::InvalidName(_))
         ));
         assert!(matches!(
             seal(
-                ProfileId::DenariusWeb,
+                ProfileId::AppWeb,
                 vec![env("DB_PASS", "x"), env("DB_PASS", "y")],
                 &kek
             ),
@@ -457,7 +457,7 @@ mod tests {
         ));
         assert!(matches!(
             seal(
-                ProfileId::DenariusWeb,
+                ProfileId::AppWeb,
                 vec![env("DB_PASS", "bad\nline")],
                 &kek
             ),
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn open_rejects_truncated_bundle() {
         let kek = kek();
-        let bundle = seal(ProfileId::DenariusWeb, vec![env("DB_PASS", "x")], &kek).unwrap();
+        let bundle = seal(ProfileId::AppWeb, vec![env("DB_PASS", "x")], &kek).unwrap();
         assert!(matches!(open(&bundle[..8], &kek), Err(Error::BundleAuth)));
     }
 

@@ -384,7 +384,7 @@ const NGINX_DOC_CATALOG: &str = r#"{
     "name": "nginx",
     "inject": [],
     "runtime": [],
-    "documents": ["nginx/amtgard.conf"]
+    "documents": ["nginx/site-a.conf"]
   }]
 }"#;
 
@@ -395,7 +395,7 @@ fn sync_seals_nginx_documents_from_fake_s3() {
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, NGINX_DOC_CATALOG);
     let s3 = MemoryS3::new();
-    s3.put("recovery/nginx/amtgard.conf", b"server { listen 443; }");
+    s3.put("recovery/nginx/site-a.conf", b"server { listen 443; }");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
     let options = SyncOptions {
@@ -411,7 +411,7 @@ fn sync_seals_nginx_documents_from_fake_s3() {
     let opened = open_bytes(&bytes, &kek).unwrap();
     assert_eq!(opened.profile, "nginx");
     assert_eq!(opened.entries.len(), 1);
-    assert_eq!(opened.entries[0].name, "amtgard.conf");
+    assert_eq!(opened.entries[0].name, "site-a.conf");
     assert_eq!(&*opened.entries[0].bytes, b"server { listen 443; }");
     let _ = std::fs::remove_dir_all(&state_dir);
 }

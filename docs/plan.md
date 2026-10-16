@@ -2,9 +2,9 @@
 
 The spike in this repo is exploratory. This document is the plan to build.
 
-The agent is a Rust unix service. It has no TCP listener and no web UI. It installs as a systemd unit. Denarius and the IDP stay PHP. The agent is a separate binary so a bug in those apps is not a bug in the process that holds key material.
+The agent is a Rust unix service. It has no TCP listener and no web UI. It installs as a systemd unit. Application processes stay in their own containers; the agent is a separate binary so a bug in an app is not a bug in the process that holds key material.
 
-A profile is a process. PHP shares an address space, so a mode inside one process is not a boundary. Containers receive only the profile mounted or requested for that process.
+A profile is a process boundary. Containers receive only the profile mounted or requested for that process.
 
 ## Storage
 
@@ -12,17 +12,16 @@ Three stores, with different jobs.
 
 **Local vault.** The copy the host uses. One sealed bundle per profile under `/var/lib/host-env-vault/`. The bundle is `HEV1`: a fresh 32-byte data key, XChaCha20-Poly1305 over the entries, profile name as associated data. An age identity at `/etc/host-env-vault/kek.age` (mode `0400`) wraps the data key. The identity is generated on first sync and never uploaded. A new host mints a new identity and seals again from SSM.
 
-**SSM Parameter Store.** The source of truth and the disaster-recovery copy. Standard `SecureString` parameters encrypted with the AWS-managed `aws/ssm` key. The agent polls once an hour and on `host-env-vault sync`. The instance role can `GetParameter` on `/amtgard/*` and cannot `PutParameter`. Operators write and rotate values with credentials the host does not have.
+**SSM Parameter Store.** The source of truth and the disaster-recovery copy. Standard `SecureString` parameters encrypted with the AWS-managed `aws/ssm` key. The agent polls once an hour and on `host-env-vault sync`. The instance role can `GetParameter` on the configured catalog and secrets prefix and cannot `PutParameter`. Operators write and rotate values with credentials the host does not have.
 
 **S3.** Plain recovery files only: application env files and nginx site configs. No passwords, API keys, tokens, or key files. The bucket is versioned. The instance role can `GetObject` on that prefix and cannot write it.
 
 ```text
-/amtgard/vault/profiles                         SecureString, the catalog
-/amtgard/<profile>/<entry>                      SecureString, one secret each
+/host-env-vault/profiles                        SecureString, the catalog (default; override with --catalog-param)
+/host-env-vault/<profile>/<entry>               SecureString, one secret each (default prefix; override with --secrets-prefix)
 
-s3://<bucket>/denarius.env
-s3://<bucket>/idp.env
-s3://<bucket>/nginx/<site>.conf
+s3://<bucket>/<prefix>/app.env
+s3://<bucket>/<prefix>/nginx/<site>.conf
 ```
 
 Bootstrap on the host is non-secret: region, catalog parameter name, S3 bucket and prefix, and local paths. It can live in the systemd unit.
@@ -33,7 +32,7 @@ An hourly sync does not rewrite tmpfs files a container already has mounted. Tho
 
 ## Catalog
 
-The binary has no Denarius, IDP, or GitHub enum. The SSM catalog is the allowlist. A name that is not in a profile is not sealed and not served.
+The binary has no application enum. The SSM catalog is the allowlist. A name that is not in a profile is not sealed and not served.
 
 Each profile records:
 
@@ -46,19 +45,18 @@ Each profile records:
 - GitHub active user, only on the `github` profile
 - document keys in S3, if any
 
-Starting profiles, as catalog data rather than code:
+Example profiles (catalog data, not code — see `dev-shared/catalog.d/`):
 
 | Profile | Injected | Runtime | Socket |
 | --- | --- | --- | --- |
-| `denarius-web` | `DB_PASS`, `IDP_CLIENT_SECRET`, `STRIPE_PUBLISHABLE_KEY` | none | no |
-| `denarius-worker` | `DB_PASS`, `STRIPE_WEBHOOK_SECRET` | `STRIPE_SECRET_KEY`, `APP_KEY`, Teller files | yes |
-| `denarius-connect` | `STRIPE_SECRET_KEY` | none | no |
-| `idp-http` | provisional, until the HTTP process is traced | provisional | no |
-| `idp-worker` | provisional | provisional | no |
-| `github` | none | one token per account | no |
-| `nginx` | none | none | no |
+| `app-web` | `DB_PASS`, `SESSION_SECRET`, … | none | no |
+| `app-worker` | `DB_PASS`, webhooks | API keys, `APP_KEY`, client certs | yes |
+| `edge-proxy` | sidecar secrets | none | no |
+| `api-http` / `api-worker` | split by container | optional | usually no |
+| `github` (optional) | none | tokens per account | no |
+| `edge-nginx` | none | none | no (documents from S3) |
 
-`idp-http` and `idp-worker` stay provisional in the catalog until `amtgardidpapp` and `jwt-pvh-worker.php` are traced. Overlap such as `oauth-private.key` is written explicitly in the catalog. A PEM or private key over 4096 bytes does not fit a standard `SecureString` and is rejected at sync.
+PEM or private keys over 4096 bytes do not fit a standard SSM `SecureString` and are rejected at sync unless stored as file entries within the size cap.
 
 `aws/ssm` allows decrypt for every principal in the account. Isolation on this host is the instance role’s parameter path plus the agent refusing to serve one profile’s entries on another profile’s socket. A customer-managed key is a later change if some other principal in the account must be unable to decrypt these values.
 
@@ -72,7 +70,7 @@ Starting profiles, as catalog data rather than code:
 
 ## GitHub
 
-The vault does not implement a credential store. The `github` profile holds one token per account (`esdraelon`, `megiddo`, and any later account).
+The vault does not implement a credential store. An optional `github` profile holds one token per account name in the catalog.
 
 ```text
 host-env-vault sync
@@ -183,7 +181,7 @@ Mutation command (library scope; `src/main.rs` excluded in `mutants.toml`). Pref
 - Commit: `1014242b8b7a740de1d9a887db12048ece0b7dbd`
 - Gates: `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04 cargo test` (121 tests, full suite) — passed; line coverage **95.55%** on `src/` (`cargo llvm-cov --lib`); `CARGO_TARGET_DIR=/tmp/host-env-vault-target-m04-mutants cargo mutants --file 'src/sync/*.rs'` — **25/26 caught (96.2%)** on M4 scope (7 unviable, 1 missed: empty-parent guard in atomic write).
 - Log-tested decision branches (separate `sync::log_tests` module): sync catalog loaded and bundle replaced, sync profile failed keeping bundle, sync reject oversize parameter, sync created host identity on first run.
-- `sync` CLI subcommand (`--identity`, `--state-dir`, `--catalog-param`) calls AWS SSM via SDK in `main`; library integration tests use `MemorySsm`. Pulls `/amtgard/<profile>/<entry>`, seals through slot 0, atomically replaces `<profile>.hev`, mints age identity when missing.
+- `sync` CLI subcommand (`--identity`, `--state-dir`, `--catalog-param`, `--secrets-prefix`) calls AWS SSM via SDK in `main`; library integration tests use `MemorySsm`. Pulls `{secrets_prefix}/<profile>/<entry>`, seals through slot 0, atomically replaces `<profile>.hev`, mints age identity when missing.
 - [x] **M5** `stack/m05-render` — Render command. Write an empty destination from the local bundle. Integration test: file modes, refusal of a dirty destination, and no call to the SSM port.
 
 ### M5 completion

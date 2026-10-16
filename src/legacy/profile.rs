@@ -4,19 +4,19 @@ use crate::core::error::Error;
 /// second profile inside a bundle or a socket frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProfileId {
-    DenariusWeb,
-    DenariusWorker,
-    DenariusConnect,
-    IdpHttp,
-    IdpWorker,
+    AppWeb,
+    AppWorker,
+    EdgeProxy,
+    ApiHttp,
+    ApiWorker,
 }
 
 pub const ALL: [ProfileId; 5] = [
-    ProfileId::DenariusWeb,
-    ProfileId::DenariusWorker,
-    ProfileId::DenariusConnect,
-    ProfileId::IdpHttp,
-    ProfileId::IdpWorker,
+    ProfileId::AppWeb,
+    ProfileId::AppWorker,
+    ProfileId::EdgeProxy,
+    ProfileId::ApiHttp,
+    ProfileId::ApiWorker,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,11 +64,11 @@ pub struct Policy {
 impl ProfileId {
     pub fn as_str(self) -> &'static str {
         match self {
-            ProfileId::DenariusWeb => "app-web",
-            ProfileId::DenariusWorker => "app-worker",
-            ProfileId::DenariusConnect => "edge-proxy",
-            ProfileId::IdpHttp => "idp-http",
-            ProfileId::IdpWorker => "idp-worker",
+            ProfileId::AppWeb => "app-web",
+            ProfileId::AppWorker => "app-worker",
+            ProfileId::EdgeProxy => "edge-proxy",
+            ProfileId::ApiHttp => "api-http",
+            ProfileId::ApiWorker => "api-worker",
         }
     }
 
@@ -80,13 +80,13 @@ impl ProfileId {
 
     pub fn policy(self) -> Policy {
         match self {
-            ProfileId::DenariusWeb => Policy {
+            ProfileId::AppWeb => Policy {
                 provisional: false,
                 runtime_key_wrap: false,
                 env: &["DB_PASS", "IDP_CLIENT_SECRET", "STRIPE_PUBLISHABLE_KEY"],
                 files: &[],
             },
-            ProfileId::DenariusWorker => Policy {
+            ProfileId::AppWorker => Policy {
                 provisional: false,
                 runtime_key_wrap: true,
                 env: &[
@@ -100,15 +100,15 @@ impl ProfileId {
                 ],
                 files: &["teller.key", "teller.pem"],
             },
-            ProfileId::DenariusConnect => Policy {
+            ProfileId::EdgeProxy => Policy {
                 provisional: false,
                 runtime_key_wrap: false,
                 env: &["STRIPE_SECRET_KEY"],
                 files: &[],
             },
-            // Hypothesis until amtgardidpapp and jwt-pvh-worker.php are traced.
+            // Legacy spike allowlist; catalog-driven sync supersedes for production.
             // Overlap is explicit: both may still open the signing key.
-            ProfileId::IdpHttp => Policy {
+            ProfileId::ApiHttp => Policy {
                 provisional: true,
                 runtime_key_wrap: false,
                 env: &[
@@ -128,7 +128,7 @@ impl ProfileId {
                 ],
                 files: &["apple.p8", "oauth-private.key"],
             },
-            ProfileId::IdpWorker => Policy {
+            ProfileId::ApiWorker => Policy {
                 provisional: true,
                 runtime_key_wrap: false,
                 env: &["DB_PASS", "JWT_KEY"],
@@ -185,9 +185,9 @@ mod tests {
 
     #[test]
     fn legacy_spike_profiles_do_not_share_stripe_secret_material() {
-        let web = ProfileId::DenariusWeb.policy();
-        let worker = ProfileId::DenariusWorker.policy();
-        let connect = ProfileId::DenariusConnect.policy();
+        let web = ProfileId::AppWeb.policy();
+        let worker = ProfileId::AppWorker.policy();
+        let connect = ProfileId::EdgeProxy.policy();
 
         assert!(!web.allows(Kind::Env, "STRIPE_SECRET_KEY"));
         assert!(!web.allows(Kind::Env, "APP_KEY"));
@@ -210,13 +210,13 @@ mod tests {
             .into_iter()
             .filter(|profile| profile.policy().runtime_key_wrap)
             .collect();
-        assert_eq!(runtime, vec![ProfileId::DenariusWorker]);
+        assert_eq!(runtime, vec![ProfileId::AppWorker]);
     }
 
     #[test]
     fn idp_allowlists_are_provisional_and_overlap_on_the_signing_key() {
-        let http = ProfileId::IdpHttp.policy();
-        let worker = ProfileId::IdpWorker.policy();
+        let http = ProfileId::ApiHttp.policy();
+        let worker = ProfileId::ApiWorker.policy();
         assert!(http.provisional && worker.provisional);
         assert!(http.allows(Kind::File, "oauth-private.key"));
         assert!(worker.allows(Kind::File, "oauth-private.key"));

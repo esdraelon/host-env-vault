@@ -1,3 +1,9 @@
 /target
 /mutants.out
 /mutants.out.old/
+/dev-shared/secrets/
+/dev-shared/state/
+/dev-shared/run/
+/dev-shared/kek.age
+/dev-shared/host-config.toml
+/dev-shared/build/

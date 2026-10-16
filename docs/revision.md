@@ -129,8 +129,8 @@ local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
 
 ## M13 — Neutral naming in tests and legacy cleanup
 
-- Replace `denarius-*` fixture profile names with `app-web`, `app-worker`, `edge-proxy`.
-- Move `ProfileId` enum and `seal` subcommand to `legacy` only; remove Denarius/IDP references from crate docs and clap `about`.
+- Replace legacy fixture profile names with neutral examples: `app-web`, `app-worker`, `edge-proxy`.
+- Move `ProfileId` enum and `seal` subcommand to `legacy` only; remove product-specific references from crate docs and clap `about`.
 - **`hydrate gh`** — Generalize to `hydrate tool` driven by catalog extension (tool name, profile, entry mapping) or move to a separate optional binary so core stays generic.
 
 - [x] **M13** `stack/m13-neutral-fixtures` — Neutral catalog fixture names in tests; generic hydrate users; crate description cleanup.
@@ -140,7 +140,7 @@ local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
 - Branch: `stack/m13-neutral-fixtures`
 - Commit: `3271745`
 - Gates: `./scripts/gate.sh test` — **225** tests passed; per-file `./scripts/gate.sh mutants -- --file …` on all touched `.rs` modules — **311/357 caught (87.1%)** on viable mutants (44 unviable; `catalog/load.rs` and `testing/mutation_closeout.rs` have no production mutants in scope).
-- Catalog-driven tests use `app-web`, `app-worker`, and `edge-proxy` instead of `denarius-*`; GitHub hydrate tests use generic `gh-user-alpha` / `gh-user-beta`; [`Cargo.toml`](Cargo.toml) description and [`legacy/profile`](src/legacy/profile.rs) docs no longer name a specific product. Legacy [`ProfileId`](src/legacy/profile.rs) enum variants kept; `as_str()` aligned to neutral names; `hydrate gh` / `seal` CLI generalization deferred to a later milestone.
+- Catalog-driven tests use `app-web`, `app-worker`, and `edge-proxy`; GitHub hydrate tests use generic `gh-user-alpha` / `gh-user-beta`; [`Cargo.toml`](Cargo.toml) description and [`legacy/profile`](src/legacy/profile.rs) docs stay product-agnostic. Legacy [`ProfileId`](src/legacy/profile.rs) enum variants kept; `as_str()` aligned to neutral names; `hydrate gh` / `seal` CLI generalization deferred to a later milestone.
 
 ## M14 — Unit templates
 
