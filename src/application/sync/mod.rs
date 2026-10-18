@@ -228,6 +228,14 @@ struct PulledEntry {
     bytes: Zeroizing<Vec<u8>>,
 }
 
+/// Load every catalog-listed secret entry for one profile (no sealing).
+pub(crate) fn pull_profile_entry_count(
+    secrets: &dyn SecretSource,
+    definition: &ProfileDefinition,
+) -> Result<usize, Error> {
+    pull_profile_entries(secrets, definition).map(|entries| entries.len())
+}
+
 fn pull_profile_entries(
     secrets: &dyn SecretSource,
     definition: &ProfileDefinition,

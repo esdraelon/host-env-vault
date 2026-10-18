@@ -41,14 +41,17 @@ pub use application::serve::{
     bind_serve_socket, fetch_runtime_entry, serve_profile_forever, ServeOptions, SERVE_SLOT_INDEX,
 };
 pub use application::sync::{
-    bundle_path, load_or_create_identity, ssm_entry_parameter, sync_catalog_from_text,
-    sync_from_local, sync_from_ports, sync_from_secret_source, sync_from_ssm, SyncOptions,
-    DEFAULT_STATE_DIR,
-    SYNC_SLOT_INDEX,
+    bundle_path, load_or_create_identity, ssm_entry_parameter,
+    sync_catalog_from_text, sync_from_local, sync_from_ports, sync_from_secret_source,
+    sync_from_ssm, SyncOptions, DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
+};
+pub use application::validate::{
+    validate_from_local, validate_from_secret_source, validate_from_ssm, ValidateOptions,
 };
 pub use config::{
     load_config, parse_config_text, parse_sync_source, resolve_config_path, FileConfig,
-    RenderCliOverrides, ResolvedSync, ServeCliOverrides, SyncCliOverrides, SyncSourceKind,
+    RenderCliOverrides, ResolvedSync, ResolvedValidate, ServeCliOverrides, SyncCliOverrides,
+    SyncSourceKind, ValidateCliOverrides,
     CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH, DEFAULT_RUNTIME_DIR,
 };
 pub use catalog::{

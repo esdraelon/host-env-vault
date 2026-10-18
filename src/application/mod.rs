@@ -6,3 +6,4 @@ pub mod hydrate;
 pub mod render;
 pub mod serve;
 pub mod sync;
+pub mod validate;

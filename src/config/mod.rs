@@ -59,6 +59,32 @@ pub enum SyncSourceKind {
     Local,
 }
 
+/// CLI-only overrides for `validate` (same sync backend flags; no identity or state dir).
+#[derive(Debug, Default)]
+pub struct ValidateCliOverrides {
+    pub source: Option<SyncSourceKind>,
+    pub catalog_param: Option<String>,
+    pub secrets_prefix: Option<String>,
+    pub local_secrets_dir: Option<PathBuf>,
+    pub s3_bucket: Option<String>,
+    pub s3_prefix: Option<String>,
+    pub profile: Option<String>,
+    pub manifest: Option<PathBuf>,
+}
+
+/// Resolved validate settings after merge (file then CLI over hardcoded defaults).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedValidate {
+    pub source: SyncSourceKind,
+    pub catalog_param: String,
+    pub secrets_prefix: String,
+    pub local_secrets_dir: Option<PathBuf>,
+    pub s3_bucket: Option<String>,
+    pub s3_prefix: Option<String>,
+    pub profile: Option<String>,
+    pub manifest: Option<PathBuf>,
+}
+
 /// CLI-only overrides for `sync` (set flags win over file and defaults).
 #[derive(Debug, Default)]
 pub struct SyncCliOverrides {
@@ -163,6 +189,42 @@ impl FileConfig {
             local_secrets_dir,
             s3_bucket,
             s3_prefix,
+        })
+    }
+
+    pub fn resolve_validate(&self, cli: &ValidateCliOverrides) -> Result<ResolvedValidate, Error> {
+        let source = pick_source(cli.source, self.sync.source.as_deref())?;
+        let catalog_param = pick_string(
+            cli.catalog_param.as_deref(),
+            self.sync.catalog_param.as_deref(),
+            DEFAULT_CATALOG_PARAMETER,
+        );
+        let secrets_prefix = pick_string(
+            cli.secrets_prefix.as_deref(),
+            self.sync.secrets_prefix.as_deref(),
+            DEFAULT_SECRETS_PREFIX,
+        );
+        let local_secrets_dir = cli
+            .local_secrets_dir
+            .clone()
+            .or_else(|| self.sync.local_secrets_dir.clone());
+        let s3_bucket = cli
+            .s3_bucket
+            .clone()
+            .or_else(|| self.sync.s3_bucket.clone());
+        let s3_prefix = cli
+            .s3_prefix
+            .clone()
+            .or_else(|| self.sync.s3_prefix.clone());
+        Ok(ResolvedValidate {
+            source,
+            catalog_param,
+            secrets_prefix,
+            local_secrets_dir,
+            s3_bucket,
+            s3_prefix,
+            profile: cli.profile.clone(),
+            manifest: cli.manifest.clone(),
         })
     }
 
