@@ -204,7 +204,7 @@ Adjust the `@` instance name to each catalog profile with `socket: true`.
 
 ### Local development
 
-**Multiple apps on one Mac:** use [`dev-shared/`](dev-shared/README.md) (compositional `catalog.d/`, `./scripts/local-shared-bootstrap.sh`) — see [compositional catalog](docs/compositional-catalog.md).
+**Multiple apps on one Mac:** create a gitignored [`dev-shared/`](docs/examples/dev-shared/README.md) beside the repo (starter files in [`docs/examples/dev-shared/`](docs/examples/dev-shared/)), then `./scripts/local-shared-bootstrap.sh` — see [compositional catalog](docs/compositional-catalog.md).
 
 On a laptop you can sync without AWS. Create a directory (for example `./dev-secrets`) with:
 

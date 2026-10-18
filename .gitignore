@@ -25,10 +25,5 @@ rustc-ice-*.txt
 
 .DS_Store
 
-# Local shared dev (generated secrets and bundles)
-/dev-shared/secrets/
-/dev-shared/state/
-/dev-shared/run/
-/dev-shared/kek.age
-/dev-shared/host-config.toml
-/dev-shared/build/
+# Local multi-app dev tree (create beside the repo; never commit)
+/dev-shared/

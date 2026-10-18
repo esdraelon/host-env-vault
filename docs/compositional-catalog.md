@@ -30,9 +30,9 @@ Rules:
 
 ## Shared laptop (multi-app)
 
-Use [`dev-shared/`](../dev-shared/README.md):
+Create a **gitignored** `dev-shared/` beside the repo (see [docs/examples/dev-shared/](examples/dev-shared/README.md) for starter fragments and env templates):
 
-1. Drop one fragment per app into `dev-shared/catalog.d/`.
+1. Drop one fragment per app into `dev-shared/catalog.d/` (or copy from the examples and edit).
 2. `./scripts/local-shared-bootstrap.sh` or `./scripts/local-shared-sync.sh`.
 3. `render` per profile before each compose stack starts.
 

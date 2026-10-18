@@ -3,8 +3,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEV_SHARED="$REPO_ROOT/dev-shared"
+DEV_SHARED="${HEV_DEV_SHARED:-$REPO_ROOT/dev-shared}"
+TEMPLATE="${HEV_DEV_SHARED_TEMPLATE:-$REPO_ROOT/docs/examples/dev-shared}"
 SECRETS="$DEV_SHARED/secrets"
+
+if [[ ! -d "$DEV_SHARED/secrets.example" && -d "$TEMPLATE/secrets.example" ]]; then
+  mkdir -p "$DEV_SHARED"
+  cp -R "$TEMPLATE/catalog.d" "$TEMPLATE/secrets.example" "$DEV_SHARED/"
+  [[ -f "$TEMPLATE/host-config.toml.example" ]] && cp "$TEMPLATE/host-config.toml.example" "$DEV_SHARED/"
+  echo "seeded $DEV_SHARED from $TEMPLATE"
+fi
 
 mkdir -p "$SECRETS/files"
 if [[ ! -f "$DEV_SHARED/host-config.toml" ]]; then
