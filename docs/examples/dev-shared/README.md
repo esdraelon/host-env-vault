@@ -1,5 +1,7 @@
 # Shared local dev (multi-app, one vault)
 
+**Tracked copy for bootstrapping only.** Copy or let `./scripts/local-shared-bootstrap.sh` seed `dev-shared/` at the repo root (that directory is gitignored and holds your real catalog fragments and secrets).
+
 One **host agent state** on a laptop can serve several application repos. Each app only mounts **rendered** secret directories (or runtime sockets); apps do not run their own vault.
 
 ## Layout
