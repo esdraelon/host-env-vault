@@ -48,6 +48,10 @@ pub enum Error {
     SyncFailed { count: usize },
     #[error("validate failed for {count} profile(s)")]
     ValidateFailed { count: usize },
+    #[error("manifest missing for profile `{profile}` at {path}")]
+    ManifestMissing { profile: String, path: PathBuf },
+    #[error("manifest mismatch for profile `{profile}`: {detail}")]
+    ManifestMismatch { profile: String, detail: String },
     #[error(transparent)]
     Io(#[from] io::Error),
 }

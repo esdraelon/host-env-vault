@@ -352,6 +352,7 @@ mod log_tests;
 mod unit_tests {
     use super::*;
     use crate::application::sync::DEFAULT_STATE_DIR;
+    use crate::application::manifest::seed_manifests_for_catalog_text;
     use crate::application::sync::{bundle_path, sync_from_ssm, SyncOptions};
     use crate::catalog::SealEntry;
     use crate::catalog::{parse_catalog_text, write_catalog_snapshot, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
@@ -426,6 +427,7 @@ mod unit_tests {
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
         ssm.put("/host-env-vault/app-worker/client.key", "file-data");
         let kek = AgeKek::generate();
+        seed_manifests_for_catalog_text(&root, WORKER).unwrap();
         let mut table = SlotTable::new();
         sync_from_ssm(
             &ssm,
@@ -436,6 +438,9 @@ mod unit_tests {
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
                 secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+                source: crate::config::SyncSourceKind::Ssm,
+                local_secrets_dir: None,
+                manifests_dir: None,
                 s3_prefix: None,
             },
         )
@@ -485,6 +490,7 @@ mod unit_tests {
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
         ssm.put("/host-env-vault/app-worker/client.key", "f");
         let kek = AgeKek::generate();
+        seed_manifests_for_catalog_text(&root, WORKER).unwrap();
         let mut table = SlotTable::new();
         sync_from_ssm(
             &ssm,
@@ -495,6 +501,9 @@ mod unit_tests {
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
                 secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+                source: crate::config::SyncSourceKind::Ssm,
+                local_secrets_dir: None,
+                manifests_dir: None,
                 s3_prefix: None,
             },
         )
@@ -617,6 +626,7 @@ mod unit_tests {
         ssm.put("/host-env-vault/app-worker/APP_KEY", "k");
         ssm.put("/host-env-vault/app-worker/client.key", "file-data");
         let kek = AgeKek::generate();
+        seed_manifests_for_catalog_text(&root, WORKER).unwrap();
         let mut table = SlotTable::new();
         sync_from_ssm(
             &ssm,
@@ -627,6 +637,9 @@ mod unit_tests {
                 state_dir: root.clone(),
                 catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
                 secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+                source: crate::config::SyncSourceKind::Ssm,
+                local_secrets_dir: None,
+                manifests_dir: None,
                 s3_prefix: None,
             },
         )

@@ -77,7 +77,9 @@ enum Command {
         /// Validate only this catalog profile (default: all profiles).
         #[arg(long)]
         profile: Option<String>,
-        /// Optional per-app manifest for entry-name cross-check (see docs/validate.md).
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Override manifest path for a single `--profile` (default: per-profile discovery).
         #[arg(long)]
         manifest: Option<PathBuf>,
     },
@@ -221,13 +223,16 @@ fn run() -> Result<(), host_env_vault::Error> {
             s3_bucket,
             s3_prefix,
             profile,
+            state_dir,
             manifest,
         } => {
             let resolved = file_config.resolve_validate(&ValidateCliOverrides {
+                state_dir,
                 source: source.map(SyncSourceKind::from),
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
                 profile,
@@ -236,12 +241,18 @@ fn run() -> Result<(), host_env_vault::Error> {
             let mut options = host_env_vault::ValidateOptions::new(
                 resolved.catalog_param,
                 resolved.secrets_prefix,
+            )
+            .with_manifest_lookup(
+                resolved.state_dir,
+                resolved.source,
+                resolved.local_secrets_dir.clone(),
+                resolved.manifests_dir,
             );
             if let Some(filter) = resolved.profile {
                 options = options.with_profile(filter);
             }
             if let Some(path) = resolved.manifest {
-                options = options.with_manifest(path);
+                options = options.with_manifest_override(path);
             }
             let aws_s3 = if let Some(bucket) = resolved.s3_bucket {
                 options = options.with_s3_prefix(resolved.s3_prefix.unwrap_or_default());
@@ -282,6 +293,7 @@ fn run() -> Result<(), host_env_vault::Error> {
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
             })?;
@@ -292,6 +304,11 @@ fn run() -> Result<(), host_env_vault::Error> {
                 resolved.state_dir.clone(),
                 resolved.catalog_param,
                 resolved.secrets_prefix,
+            )
+            .with_manifest_lookup(
+                resolved.source,
+                resolved.local_secrets_dir.as_ref().cloned(),
+                resolved.manifests_dir.clone(),
             );
             let aws_s3 = if let Some(bucket) = resolved.s3_bucket {
                 options = options.with_s3_prefix(resolved.s3_prefix.unwrap_or_default());

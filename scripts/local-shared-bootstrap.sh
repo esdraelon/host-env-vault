@@ -10,6 +10,9 @@ SECRETS="$DEV_SHARED/secrets"
 if [[ ! -d "$DEV_SHARED/secrets.example" && -d "$TEMPLATE/secrets.example" ]]; then
   mkdir -p "$DEV_SHARED"
   cp -R "$TEMPLATE/catalog.d" "$TEMPLATE/secrets.example" "$DEV_SHARED/"
+  if [[ -d "$TEMPLATE/manifests" ]]; then
+    cp -R "$TEMPLATE/manifests" "$DEV_SHARED/"
+  fi
   [[ -f "$TEMPLATE/host-config.toml.example" ]] && cp "$TEMPLATE/host-config.toml.example" "$DEV_SHARED/"
   echo "seeded $DEV_SHARED from $TEMPLATE"
 fi
@@ -28,6 +31,17 @@ catalog_param = "/host-env-vault/profiles"
 secrets_prefix = "/host-env-vault"
 EOF
   echo "created dev-shared/host-config.toml (absolute paths under $DEV_SHARED)"
+fi
+
+if [[ -d "$DEV_SHARED/manifests" ]]; then
+  for f in "$DEV_SHARED/manifests/"*.env-host-vault; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    if [[ ! -f "$SECRETS/$base" ]]; then
+      cp "$f" "$SECRETS/$base"
+      echo "installed secrets/$base (manifest beside .env for local source)"
+    fi
+  done
 fi
 
 for f in "$DEV_SHARED/secrets.example"/*.env; do

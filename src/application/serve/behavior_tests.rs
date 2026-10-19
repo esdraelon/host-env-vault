@@ -8,6 +8,7 @@ use crate::application::serve::{
     fetch_runtime_entry, handle_serve_connection, open_profile_into_serve_slot_for_test,
     read_entry_from_slot, ServeOptions, SERVE_SLOT_INDEX,
 };
+use crate::application::manifest::seed_manifests_for_catalog_text;
 use crate::application::sync::{sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
 use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::core::error::Error;
@@ -47,6 +48,8 @@ fn seed_worker_ssm(ssm: &MemorySsm) {
 
 fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
     let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests_for_catalog_text(&state_dir, WORKER_CATALOG).unwrap();
     let ssm = MemorySsm::new();
     seed_worker_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -56,6 +59,9 @@ fn sync_worker_vault(root: &PathBuf) -> (AgeKek, PathBuf) {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: crate::config::SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();

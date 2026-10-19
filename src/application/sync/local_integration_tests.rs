@@ -5,7 +5,10 @@ use std::thread;
 
 use crate::application::render::{render_from_vault, RenderOptions};
 use crate::application::serve::{fetch_runtime_entry, handle_serve_connection, ServeOptions};
+use crate::application::manifest::write_manifest_for_profile;
 use crate::application::sync::{sync_from_local, SyncOptions, SYNC_SLOT_INDEX};
+use crate::catalog::parse_catalog_text;
+use crate::config::SyncSourceKind;
 use crate::core::slot::SlotTable;
 use crate::legacy::profile::Kind;
 use crate::legacy::serve::{bind_runtime_socket, exchange, OP_FETCH_ENV, ST_OK};
@@ -43,6 +46,8 @@ fn seed_local_secrets(root: &PathBuf) {
     )
     .unwrap();
     fs::write(root.join("files/client.key"), "client-local-bytes").unwrap();
+    let catalog = parse_catalog_text(APP_CATALOG).unwrap();
+    write_manifest_for_profile(root, catalog.profile("app-web").unwrap()).unwrap();
 }
 
 #[test]
@@ -61,6 +66,9 @@ fn local_sync_render_and_serve_without_aws() {
         state_dir: state_dir.clone(),
         catalog_param: String::new(),
         secrets_prefix: String::new(),
+        source: SyncSourceKind::Local,
+        local_secrets_dir: Some(secrets_dir.clone()),
+        manifests_dir: None,
         s3_prefix: None,
     };
 
@@ -87,6 +95,7 @@ fn local_sync_render_and_serve_without_aws() {
     let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
     assert!(env.contains("DB_PASS=db-local\n"));
     assert!(env.contains("WEBHOOK_HMAC=whsec-local\n"));
+    assert!(env.contains("ENV_HOST_VAULT_STALE=false\n"));
     assert!(!env.contains("APP_KEY"));
 
     let uid = unsafe { libc::getuid() };

@@ -3,23 +3,29 @@
 use std::path::PathBuf;
 
 use crate::application::documents::pull_profile_documents;
+use crate::application::manifest::{ManifestDiscovery, preflight_profile_manifest};
 use crate::application::sync::pull_profile_entry_count;
 use crate::catalog::{parse_catalog_text, Catalog, ProfileDefinition};
+use crate::config::SyncSourceKind;
 use crate::core::error::Error;
 use crate::ports::s3::S3Port;
 use crate::ports::secret_source::{LocalSecretSource, SecretSource, SsmSecretSource};
 use crate::ports::ssm::SsmPort;
 
-/// Parameter names and optional filters for a validate run (no host identity or state dir).
+/// Parameter names and optional filters for a validate run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidateOptions {
     pub catalog_param: String,
     pub secrets_prefix: String,
+    pub state_dir: PathBuf,
+    pub source: SyncSourceKind,
+    pub local_secrets_dir: Option<PathBuf>,
+    pub manifests_dir: Option<PathBuf>,
     pub s3_prefix: Option<String>,
     /// When set, only this catalog profile is checked.
     pub profile: Option<String>,
-    /// Optional per-app manifest for cross-checking expected entry names (see `docs/validate.md`).
-    pub manifest_path: Option<PathBuf>,
+    /// Single-profile override path (requires [`ValidateOptions::profile`]).
+    pub manifest_override: Option<PathBuf>,
 }
 
 impl ValidateOptions {
@@ -27,9 +33,13 @@ impl ValidateOptions {
         Self {
             catalog_param,
             secrets_prefix,
+            state_dir: PathBuf::from(crate::application::sync::DEFAULT_STATE_DIR),
+            source: SyncSourceKind::Ssm,
+            local_secrets_dir: None,
+            manifests_dir: None,
             s3_prefix: None,
             profile: None,
-            manifest_path: None,
+            manifest_override: None,
         }
     }
 
@@ -43,9 +53,36 @@ impl ValidateOptions {
         self
     }
 
-    pub fn with_manifest(mut self, path: PathBuf) -> Self {
-        self.manifest_path = Some(path);
+    pub fn with_manifest_lookup(
+        mut self,
+        state_dir: PathBuf,
+        source: SyncSourceKind,
+        local_secrets_dir: Option<PathBuf>,
+        manifests_dir: Option<PathBuf>,
+    ) -> Self {
+        self.state_dir = state_dir;
+        self.source = source;
+        self.local_secrets_dir = local_secrets_dir;
+        self.manifests_dir = manifests_dir;
         self
+    }
+
+    pub fn with_manifest_override(mut self, path: PathBuf) -> Self {
+        self.manifest_override = Some(path);
+        self
+    }
+
+    fn manifest_discovery(&self) -> ManifestDiscovery {
+        let mut discovery = ManifestDiscovery::new(
+            self.source,
+            &self.state_dir,
+            self.local_secrets_dir.clone(),
+            self.manifests_dir.clone(),
+        );
+        if let Some(path) = &self.manifest_override {
+            discovery = discovery.with_override(path.clone());
+        }
+        discovery
     }
 }
 
@@ -75,27 +112,18 @@ pub fn validate_from_secret_source(
     s3: Option<&dyn S3Port>,
     options: &ValidateOptions,
 ) -> Result<(), Error> {
+    if options.manifest_override.is_some() && options.profile.is_none() {
+        return Err(Error::CatalogParse(
+            "validate --manifest requires --profile (per-profile discovery is the default)".into(),
+        ));
+    }
     let catalog = load_catalog_read_only(secrets)?;
     tracing::info!(
         target: "host_env_vault::application::validate",
         profile_count = catalog.profile_names().count(),
         "validate catalog loaded"
     );
-    let manifest = options
-        .manifest_path
-        .as_ref()
-        .map(|path| load_manifest(path))
-        .transpose()?;
-    if let Some(manifest) = &manifest {
-        if let Some(filter) = &options.profile {
-            if manifest.profile != *filter {
-                return Err(Error::CatalogParse(format!(
-                    "manifest profile `{}` does not match --profile `{filter}`",
-                    manifest.profile
-                )));
-            }
-        }
-    }
+    let discovery = options.manifest_discovery();
     let mut names: Vec<_> = catalog.profile_names().collect();
     names.sort_unstable();
     if let Some(filter) = &options.profile {
@@ -109,21 +137,16 @@ pub fn validate_from_secret_source(
         let definition = catalog
             .profile(profile_name)
             .ok_or_else(|| Error::NotInCatalog(profile_name.to_owned()))?;
-        if let Some(manifest) = &manifest {
-            if manifest.profile != profile_name {
-                continue;
-            }
-            if let Err(err) = cross_check_manifest(definition, manifest) {
-                failures += 1;
-                tracing::info!(
-                    target: "host_env_vault::application::validate",
-                    profile = profile_name,
-                    error = %err,
-                    "validate profile failed manifest cross-check"
-                );
-                eprintln!("validate: profile {profile_name}: {err}");
-                continue;
-            }
+        if let Err(err) = preflight_profile_manifest(&discovery, definition) {
+            failures += 1;
+            tracing::info!(
+                target: "host_env_vault::application::validate",
+                profile = profile_name,
+                error = %err,
+                "validate profile failed manifest preflight"
+            );
+            eprintln!("validate: profile {profile_name}: {err}");
+            continue;
         }
         match validate_one_profile(secrets, s3, options.s3_prefix.as_deref(), definition) {
             Ok(entry_count) => {
@@ -170,131 +193,6 @@ fn validate_one_profile(
         count += docs.len();
     }
     Ok(count)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AppManifest {
-    profile: String,
-    inject_env: Vec<String>,
-    inject_files: Vec<String>,
-    runtime_env: Vec<String>,
-    runtime_files: Vec<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct AppManifestFile {
-    profile: String,
-    #[serde(default)]
-    inject: ManifestSection,
-    #[serde(default)]
-    runtime: ManifestSection,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-struct ManifestSection {
-    #[serde(default)]
-    env: Vec<String>,
-    #[serde(default)]
-    files: Vec<String>,
-}
-
-fn load_manifest(path: &std::path::Path) -> Result<AppManifest, Error> {
-    let text = std::fs::read_to_string(path).map_err(Error::Io)?;
-    let raw: AppManifestFile = toml::from_str(&text)
-        .map_err(|err| Error::CatalogParse(format!("manifest parse: {err}")))?;
-    Ok(AppManifest {
-        profile: raw.profile,
-        inject_env: raw.inject.env,
-        inject_files: raw.inject.files,
-        runtime_env: raw.runtime.env,
-        runtime_files: raw.runtime.files,
-    })
-}
-
-fn cross_check_manifest(definition: &ProfileDefinition, manifest: &AppManifest) -> Result<(), Error> {
-    reject_manifest_unknown(
-        definition,
-        &manifest.inject_env,
-        definition.inject_env(),
-        "inject env",
-    )?;
-    reject_manifest_unknown(
-        definition,
-        &manifest.inject_files,
-        definition.inject_files(),
-        "inject file",
-    )?;
-    reject_manifest_unknown(
-        definition,
-        &manifest.runtime_env,
-        definition.runtime_env(),
-        "runtime env",
-    )?;
-    reject_manifest_unknown(
-        definition,
-        &manifest.runtime_files,
-        definition.runtime_files(),
-        "runtime file",
-    )?;
-    warn_catalog_not_in_manifest(definition.name.as_str(), "inject env", definition.inject_env(), &manifest.inject_env);
-    warn_catalog_not_in_manifest(
-        definition.name.as_str(),
-        "inject file",
-        definition.inject_files(),
-        &manifest.inject_files,
-    );
-    warn_catalog_not_in_manifest(
-        definition.name.as_str(),
-        "runtime env",
-        definition.runtime_env(),
-        &manifest.runtime_env,
-    );
-    warn_catalog_not_in_manifest(
-        definition.name.as_str(),
-        "runtime file",
-        definition.runtime_files(),
-        &manifest.runtime_files,
-    );
-    Ok(())
-}
-
-fn reject_manifest_unknown(
-    definition: &ProfileDefinition,
-    manifest_names: &[String],
-    catalog_names: &[String],
-    kind: &'static str,
-) -> Result<(), Error> {
-    let allowed: std::collections::HashSet<&str> = catalog_names.iter().map(String::as_str).collect();
-    for name in manifest_names {
-        if !allowed.contains(name.as_str()) {
-            return Err(Error::EntryNotAllowed {
-                name: name.clone(),
-                kind,
-                profile: definition.name.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn warn_catalog_not_in_manifest(
-    profile: &str,
-    label: &str,
-    catalog_names: &[String],
-    manifest_names: &[String],
-) {
-    let listed: std::collections::HashSet<&str> = manifest_names.iter().map(String::as_str).collect();
-    for name in catalog_names {
-        if !listed.contains(name.as_str()) {
-            tracing::warn!(
-                target: "host_env_vault::application::validate",
-                profile,
-                entry = name.as_str(),
-                kind = label,
-                "validate manifest omits catalog entry"
-            );
-        }
-    }
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use serial_test::serial;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::application::manifest::seed_manifests_for_catalog_text;
 use crate::application::serve::{bind_serve_socket, fetch_runtime_entry, ServeOptions};
 use crate::application::sync::{sync_from_ssm, SyncOptions};
 use crate::catalog::{
@@ -38,6 +39,7 @@ fn log_serve_deny_runtime_entry_and_return_success() {
     fs::create_dir_all(&root).unwrap();
     let state_dir = root.join("state");
     fs::create_dir(&state_dir).unwrap();
+    seed_manifests_for_catalog_text(&state_dir, WORKER).unwrap();
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WORKER);
     ssm.put("/host-env-vault/app-worker/DB_PASS", "db");
@@ -53,6 +55,9 @@ fn log_serve_deny_runtime_entry_and_return_success() {
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
             secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+            source: crate::config::SyncSourceKind::Ssm,
+            local_secrets_dir: None,
+            manifests_dir: None,
             s3_prefix: None,
         },
     )
