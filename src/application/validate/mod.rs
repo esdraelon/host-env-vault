@@ -9,7 +9,10 @@ use crate::catalog::{parse_catalog_text, Catalog, ProfileDefinition};
 use crate::config::SyncSourceKind;
 use crate::core::error::Error;
 use crate::ports::s3::S3Port;
-use crate::ports::secret_source::{LocalSecretSource, SecretSource, SsmSecretSource};
+use crate::ports::secret_source::{
+    HostStoreSecretSource, LocalSecretSource, SecretSource, SsmSecretSource,
+};
+use crate::vault::kek::AgeKek;
 use crate::ports::ssm::SsmPort;
 
 /// Parameter names and optional filters for a validate run.
@@ -94,6 +97,23 @@ pub fn validate_from_ssm(ssm: &dyn SsmPort, options: &ValidateOptions) -> Result
         ssm,
     );
     validate_from_secret_source(&secrets, None, options)
+}
+
+/// Validate catalog (SSM or local) and entries from encrypted host store files.
+pub fn validate_from_host_store(
+    catalog: &dyn SecretSource,
+    store_dir: &std::path::Path,
+    kek: &AgeKek,
+    s3: Option<&dyn S3Port>,
+    options: &ValidateOptions,
+) -> Result<(), Error> {
+    tracing::info!(
+        target: "host_env_vault::application::validate",
+        store_dir = %store_dir.display(),
+        "validate transition mode: host encrypted store active"
+    );
+    let secrets = HostStoreSecretSource::new(catalog, store_dir, kek);
+    validate_from_secret_source(&secrets, s3, options)
 }
 
 /// Validate secrets from a local dev directory (read-only).

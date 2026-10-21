@@ -5,14 +5,26 @@ use crate::application::validate::{validate_from_local, validate_from_ssm, Valid
 use crate::catalog::{parse_catalog_text, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::config::SyncSourceKind;
 use crate::core::error::Error;
-use crate::ports::secret_source::{LocalSecretSource, SecretSource, LOCAL_CATALOG_FILE};
-use crate::ports::MemorySsm;
+use crate::application::validate::validate_from_secret_source;
+use crate::ports::secret_source::{
+    LocalSecretSource, SecretSource, SsmSecretSource, LOCAL_CATALOG_FILE,
+};
+use crate::ports::{MemoryS3, MemorySsm};
 
 const WEB_CATALOG: &str = r#"{
   "profiles": [{
     "name": "app-web",
     "inject": ["DB_PASS"],
     "runtime": []
+  }]
+}"#;
+
+const WEB_WITH_DOCUMENT: &str = r#"{
+  "profiles": [{
+    "name": "app-web",
+    "inject": ["DB_PASS"],
+    "runtime": [],
+    "documents": ["nginx/site.conf"]
   }]
 }"#;
 
@@ -177,6 +189,33 @@ files = []
         Err(Error::ValidateFailed { count: 1 })
     ));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn validate_counts_s3_documents_in_entry_total() {
+    let state_dir = temp_root("s3-docs");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_WITH_DOCUMENT);
+    let ssm = MemorySsm::new();
+    ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_WITH_DOCUMENT);
+    ssm.put("/host-env-vault/app-web/DB_PASS", "db-secret-value");
+    let s3 = MemoryS3::new();
+    s3.put("recovery/nginx/site.conf", b"server { listen 443; }");
+    let secrets = SsmSecretSource::new(
+        DEFAULT_CATALOG_PARAMETER,
+        DEFAULT_SECRETS_PREFIX,
+        &ssm,
+    );
+    let options = ssm_options(state_dir.clone()).with_s3_prefix("recovery");
+    let text = crate::testing::log_test_capture::capture_info_logs(|| {
+        validate_from_secret_source(&secrets, Some(&s3), &options).unwrap();
+    });
+    assert!(
+        text.contains("entries=2"),
+        "expected inject + document count in logs: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&state_dir);
 }
 
 #[test]

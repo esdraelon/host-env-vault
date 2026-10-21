@@ -51,7 +51,10 @@ impl AgeKek {
             .find(|line| line.starts_with("AGE-SECRET-KEY-1"))
             .ok_or(Error::Identity)?
             .to_owned();
-        zeroize_string(&mut text);
+        {
+            use zeroize::Zeroize;
+            text.zeroize();
+        }
         let identity: Identity = line.parse().map_err(|_| Error::Identity)?;
         Ok(Self { identity })
     }
@@ -72,11 +75,19 @@ impl AgeKek {
         zeroize::Zeroize::zeroize(plain.as_mut_slice());
         Ok(dek)
     }
-}
 
-fn zeroize_string(text: &mut String) {
-    use zeroize::Zeroize;
-    text.zeroize();
+    /// Seal an arbitrary payload with the host age identity (host store at rest).
+    pub fn seal_plaintext(&self, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+        let recipient = self.identity.to_public();
+        age::encrypt(&recipient, plaintext).map_err(|_| Error::Kek)
+    }
+
+    /// Open a payload sealed with [`Self::seal_plaintext`].
+    pub fn open_sealed(&self, ciphertext: &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, Error> {
+        age::decrypt(&self.identity, ciphertext)
+            .map(zeroize::Zeroizing::new)
+            .map_err(|_| Error::Kek)
+    }
 }
 
 fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
@@ -97,6 +108,15 @@ mod tests {
         let wrapped = kek.wrap_dek(&dek).unwrap();
         let back = kek.unwrap_dek(&wrapped).unwrap();
         assert_eq!(&*back, &dek);
+    }
+
+    #[test]
+    fn seal_plaintext_round_trip() {
+        let kek = AgeKek::generate();
+        let plain = b"host-store-payload";
+        let sealed = kek.seal_plaintext(plain).unwrap();
+        let back = kek.open_sealed(&sealed).unwrap();
+        assert_eq!(&back[..], plain);
     }
 
     #[test]

@@ -19,7 +19,9 @@ use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::{valid_env_value, Kind};
 use crate::ports::s3::S3Port;
-use crate::ports::secret_source::{LocalSecretSource, SecretSource, SsmSecretSource};
+use crate::ports::secret_source::{
+    HostStoreSecretSource, LocalSecretSource, SecretSource, SsmSecretSource,
+};
 use crate::ports::ssm::SsmPort;
 use crate::vault::kek::AgeKek;
 use crate::vault::local_bundle::seal_profile_in_slot;
@@ -133,6 +135,24 @@ pub fn sync_from_local(
     options: &SyncOptions,
 ) -> Result<(), Error> {
     let secrets = LocalSecretSource::new(local_secrets_dir);
+    sync_from_secret_source(&secrets, s3, kek, table, options)
+}
+
+/// Pull catalog (SSM or local) and entries from encrypted host store files into bundles.
+pub fn sync_from_host_store(
+    catalog: &dyn SecretSource,
+    store_dir: &Path,
+    kek: &AgeKek,
+    s3: Option<&dyn S3Port>,
+    table: &mut SlotTable,
+    options: &SyncOptions,
+) -> Result<(), Error> {
+    tracing::info!(
+        target: "host_env_vault::application::sync",
+        store_dir = %store_dir.display(),
+        "sync transition mode: host encrypted store active"
+    );
+    let secrets = HostStoreSecretSource::new(catalog, store_dir, kek);
     sync_from_secret_source(&secrets, s3, kek, table, options)
 }
 
@@ -358,7 +378,7 @@ fn fetch_pulled_entry(
     })
 }
 
-fn write_bundle_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+pub(crate) fn write_bundle_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
@@ -442,6 +462,9 @@ pub fn sync_catalog_from_text(
 
 #[cfg(test)]
 mod behavior_tests;
+
+#[cfg(test)]
+mod host_store_integration_tests;
 
 #[cfg(test)]
 mod local_integration_tests;

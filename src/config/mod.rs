@@ -36,6 +36,8 @@ pub struct SyncFileSection {
     pub catalog_param: Option<String>,
     pub secrets_prefix: Option<String>,
     pub local_secrets_dir: Option<PathBuf>,
+    /// Encrypted per-profile store root (default `{state_dir}/store`).
+    pub store_dir: Option<PathBuf>,
     pub manifests_dir: Option<PathBuf>,
     pub s3_bucket: Option<String>,
     pub s3_prefix: Option<String>,
@@ -50,6 +52,7 @@ pub struct ResolvedSync {
     pub catalog_param: String,
     pub secrets_prefix: String,
     pub local_secrets_dir: Option<PathBuf>,
+    pub store_dir: PathBuf,
     pub manifests_dir: Option<PathBuf>,
     pub s3_bucket: Option<String>,
     pub s3_prefix: Option<String>,
@@ -59,16 +62,19 @@ pub struct ResolvedSync {
 pub enum SyncSourceKind {
     Ssm,
     Local,
+    HostStore,
 }
 
 /// CLI-only overrides for `validate` (same sync backend flags; no identity or state dir).
 #[derive(Debug, Default)]
 pub struct ValidateCliOverrides {
+    pub identity: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
     pub source: Option<SyncSourceKind>,
     pub catalog_param: Option<String>,
     pub secrets_prefix: Option<String>,
     pub local_secrets_dir: Option<PathBuf>,
+    pub store_dir: Option<PathBuf>,
     pub manifests_dir: Option<PathBuf>,
     pub s3_bucket: Option<String>,
     pub s3_prefix: Option<String>,
@@ -79,11 +85,13 @@ pub struct ValidateCliOverrides {
 /// Resolved validate settings after merge (file then CLI over hardcoded defaults).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedValidate {
+    pub identity: Option<PathBuf>,
     pub state_dir: PathBuf,
     pub source: SyncSourceKind,
     pub catalog_param: String,
     pub secrets_prefix: String,
     pub local_secrets_dir: Option<PathBuf>,
+    pub store_dir: PathBuf,
     pub manifests_dir: Option<PathBuf>,
     pub s3_bucket: Option<String>,
     pub s3_prefix: Option<String>,
@@ -100,6 +108,7 @@ pub struct SyncCliOverrides {
     pub catalog_param: Option<String>,
     pub secrets_prefix: Option<String>,
     pub local_secrets_dir: Option<PathBuf>,
+    pub store_dir: Option<PathBuf>,
     pub manifests_dir: Option<PathBuf>,
     pub s3_bucket: Option<String>,
     pub s3_prefix: Option<String>,
@@ -178,6 +187,11 @@ impl FileConfig {
             .local_secrets_dir
             .clone()
             .or_else(|| self.sync.local_secrets_dir.clone());
+        let store_dir = pick_store_dir(
+            cli.store_dir.as_ref(),
+            self.sync.store_dir.as_ref(),
+            &state_dir,
+        );
         let manifests_dir = cli
             .manifests_dir
             .clone()
@@ -198,6 +212,7 @@ impl FileConfig {
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             manifests_dir,
             s3_bucket,
             s3_prefix,
@@ -205,6 +220,10 @@ impl FileConfig {
     }
 
     pub fn resolve_validate(&self, cli: &ValidateCliOverrides) -> Result<ResolvedValidate, Error> {
+        let identity = cli
+            .identity
+            .clone()
+            .or_else(|| self.identity.clone());
         let state_dir = pick_path(
             cli.state_dir.as_ref(),
             self.state_dir.as_ref(),
@@ -226,6 +245,11 @@ impl FileConfig {
             .local_secrets_dir
             .clone()
             .or_else(|| self.sync.local_secrets_dir.clone());
+        let store_dir = pick_store_dir(
+            cli.store_dir.as_ref(),
+            self.sync.store_dir.as_ref(),
+            &state_dir,
+        );
         let manifests_dir = cli
             .manifests_dir
             .clone()
@@ -239,11 +263,13 @@ impl FileConfig {
             .clone()
             .or_else(|| self.sync.s3_prefix.clone());
         Ok(ResolvedValidate {
+            identity,
             state_dir,
             source,
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             manifests_dir,
             s3_bucket,
             s3_prefix,
@@ -318,6 +344,12 @@ fn pick_string(cli: Option<&str>, file: Option<&str>, default: &str) -> String {
         .unwrap_or_else(|| default.to_owned())
 }
 
+fn pick_store_dir(cli: Option<&PathBuf>, file: Option<&PathBuf>, state_dir: &Path) -> PathBuf {
+    cli.cloned()
+        .or_else(|| file.cloned())
+        .unwrap_or_else(|| state_dir.join("store"))
+}
+
 fn pick_source(
     cli: Option<SyncSourceKind>,
     file: Option<&str>,
@@ -335,8 +367,9 @@ pub fn parse_sync_source(text: &str) -> Result<SyncSourceKind, Error> {
     match text.trim().to_ascii_lowercase().as_str() {
         "ssm" => Ok(SyncSourceKind::Ssm),
         "local" => Ok(SyncSourceKind::Local),
+        "host-store" => Ok(SyncSourceKind::HostStore),
         other => Err(Error::CatalogParse(format!(
-            "invalid sync source `{other}` (expected ssm or local)"
+            "invalid sync source `{other}` (expected ssm, local, or host-store)"
         ))),
     }
 }

@@ -62,8 +62,12 @@ enum Command {
     },
     /// Read-only dry-run: load catalog and secret entries without sealing bundles.
     Validate {
+        #[arg(long)]
+        identity: Option<PathBuf>,
         #[arg(long, value_enum)]
         source: Option<SyncSource>,
+        #[arg(long)]
+        store_dir: Option<PathBuf>,
         #[arg(long)]
         catalog_param: Option<String>,
         #[arg(long)]
@@ -97,6 +101,8 @@ enum Command {
         secrets_prefix: Option<String>,
         #[arg(long)]
         local_secrets_dir: Option<PathBuf>,
+        #[arg(long)]
+        store_dir: Option<PathBuf>,
         #[arg(long)]
         s3_bucket: Option<String>,
         #[arg(long)]
@@ -137,6 +143,8 @@ enum SyncSource {
     Ssm,
     /// Local directory with `catalog.json` and `{profile}.env` files.
     Local,
+    /// Encrypted per-profile files under `store_dir`; catalog from SSM or local `catalog.json`.
+    HostStore,
 }
 
 impl From<SyncSource> for SyncSourceKind {
@@ -144,6 +152,7 @@ impl From<SyncSource> for SyncSourceKind {
         match value {
             SyncSource::Ssm => SyncSourceKind::Ssm,
             SyncSource::Local => SyncSourceKind::Local,
+            SyncSource::HostStore => SyncSourceKind::HostStore,
         }
     }
 }
@@ -216,10 +225,12 @@ fn run() -> Result<(), host_env_vault::Error> {
             );
         }
         Command::Validate {
+            identity,
             source,
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             s3_bucket,
             s3_prefix,
             profile,
@@ -227,11 +238,13 @@ fn run() -> Result<(), host_env_vault::Error> {
             manifest,
         } => {
             let resolved = file_config.resolve_validate(&ValidateCliOverrides {
+                identity,
                 state_dir,
                 source: source.map(SyncSourceKind::from),
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                store_dir,
                 manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
@@ -274,6 +287,38 @@ fn run() -> Result<(), host_env_vault::Error> {
                     })?;
                     host_env_vault::validate_from_local(&local_dir, s3_port, &options)?;
                 }
+                SyncSourceKind::HostStore => {
+                    let identity_path = resolved.identity.ok_or_else(|| {
+                        host_env_vault::Error::CatalogParse(
+                            "validate --source host-store requires identity in config or --identity".into(),
+                        )
+                    })?;
+                    let kek = AgeKek::read_identity(&identity_path)?;
+                    if let Some(local_dir) = resolved.local_secrets_dir {
+                        let catalog = host_env_vault::LocalSecretSource::new(&local_dir);
+                        host_env_vault::validate_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &options,
+                        )?;
+                    } else {
+                        let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                        let catalog = host_env_vault::SsmSecretSource::new(
+                            &options.catalog_param,
+                            &options.secrets_prefix,
+                            &ssm,
+                        );
+                        host_env_vault::validate_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &options,
+                        )?;
+                    }
+                }
             }
         }
         Command::Sync {
@@ -283,6 +328,7 @@ fn run() -> Result<(), host_env_vault::Error> {
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             s3_bucket,
             s3_prefix,
         } => {
@@ -293,6 +339,7 @@ fn run() -> Result<(), host_env_vault::Error> {
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                store_dir,
                 manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
@@ -335,6 +382,34 @@ fn run() -> Result<(), host_env_vault::Error> {
                         &mut table,
                         &options,
                     )?;
+                }
+                SyncSourceKind::HostStore => {
+                    if let Some(local_dir) = resolved.local_secrets_dir {
+                        let catalog = host_env_vault::LocalSecretSource::new(&local_dir);
+                        host_env_vault::sync_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &mut table,
+                            &options,
+                        )?;
+                    } else {
+                        let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                        let catalog = host_env_vault::SsmSecretSource::new(
+                            &options.catalog_param,
+                            &options.secrets_prefix,
+                            &ssm,
+                        );
+                        host_env_vault::sync_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &mut table,
+                            &options,
+                        )?;
+                    }
                 }
             }
             eprintln!("synced bundles into {}", resolved.state_dir.display());

@@ -316,7 +316,7 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 
 **Design.**
 
-- Extend [`SecretSource`](../src/ports/secret_source.rs) with a **host store** backend: **one encrypted file per profile** under a configured store root (e.g. `{store_dir}/{profile}.hev-store` or `{profile}.secrets.age` — exact extension finalized in M22).
+- Extend [`SecretSource`](../src/ports/secret_source.rs) with a **host store** backend: **one encrypted file per profile** under a configured store root (`{store_dir}/{profile}.secrets.age`; SQLite `.secrets.db` in M22).
 - Encryption: **same age identity / KEK as `.hev` bundles** (one host key; no separate store key).
 - `sync --source host-store` (name TBD in config `[sync] source = "host-store"`) reads catalog from existing path (SSM param, local `catalog.json`, or embedded catalog pointer in config) and **entries only** from encrypted profile files.
 - **`validate`** uses the same source. Manifest preflight (M18) unchanged.
@@ -325,6 +325,16 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 **Non-goals.** No operator `vim` on cleartext; no SQLite yet (M22).
 
 **Acceptance.** Behavior tests with temp store files; gate; config TOML fields for `store_dir`.
+
+- [x] **M19** `stack/m19-host-store-per-profile`
+
+### M19 completion
+
+- **Branch:** `stack/m19-host-store-per-profile`
+- **What changed:** `[sync] source = "host-store"` / `--source host-store`; `store_dir` (default `{state_dir}/store`); per-profile `{profile}.secrets.age` sealed with host age KEK; `HostStoreSecretSource` (catalog from SSM or local `catalog.json`, entries from store); `sync` and `validate` wired; transition-mode info logs.
+- **Log-tested branches:** `sync transition mode: host encrypted store active`; `validate transition mode: host encrypted store active`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m19-host-store-per-profile`)
+- **Gate:** `./scripts/gate.sh test` — 253 passed; `./scripts/gate.sh mutants` on touched modules — 154 mutants, 111 caught, 0 missed, 43 unviable.
 
 ## M20 — Store CRUD and CLI UX
 

@@ -83,6 +83,7 @@ s3_prefix = "recovery/"
                 catalog_param: Some("/custom/profiles".into()),
                 secrets_prefix: Some("/custom/secrets".into()),
                 local_secrets_dir: Some(PathBuf::from("/etc/host-env-vault/dev")),
+                store_dir: None,
                 manifests_dir: None,
                 s3_bucket: Some("my-bucket".into()),
                 s3_prefix: Some("recovery/".into()),
@@ -252,6 +253,24 @@ fn serve_runtime_default_when_not_in_file_or_cli() {
 #[test]
 fn parse_sync_source_rejects_unknown() {
     assert!(parse_sync_source("aws").is_err());
+}
+
+#[test]
+fn parse_sync_source_accepts_host_store() {
+    assert_eq!(parse_sync_source("host-store").unwrap(), SyncSourceKind::HostStore);
+}
+
+#[test]
+fn sync_merge_default_store_dir_under_state() {
+    let cfg = FileConfig::default();
+    let resolved = cfg
+        .resolve_sync(&SyncCliOverrides {
+            identity: Some(PathBuf::from("/id.age")),
+            state_dir: Some(PathBuf::from("/var/state")),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(resolved.store_dir, PathBuf::from("/var/state/store"));
 }
 
 struct EnvGuard {

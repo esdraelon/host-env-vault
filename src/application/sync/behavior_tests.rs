@@ -573,3 +573,15 @@ fn sync_success_clears_stale_marker() {
     assert!(!stale_marker_path(&state_dir, "app-web").exists());
     let _ = std::fs::remove_dir_all(&state_dir);
 }
+
+#[test]
+fn write_bundle_atomically_creates_nested_parent_directory() {
+    use crate::application::sync::write_bundle_atomically;
+
+    let root = temp_state_dir("nested-bundle");
+    let _ = std::fs::remove_dir_all(&root);
+    let bundle = root.join("deep").join("nested").join("app-web.hev");
+    write_bundle_atomically(&bundle, b"bundle-bytes").unwrap();
+    assert_eq!(std::fs::read(&bundle).unwrap(), b"bundle-bytes");
+    let _ = std::fs::remove_dir_all(&root);
+}
