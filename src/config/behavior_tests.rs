@@ -83,6 +83,7 @@ s3_prefix = "recovery/"
                 catalog_param: Some("/custom/profiles".into()),
                 secrets_prefix: Some("/custom/secrets".into()),
                 local_secrets_dir: Some(PathBuf::from("/etc/host-env-vault/dev")),
+                manifests_dir: None,
                 s3_bucket: Some("my-bucket".into()),
                 s3_prefix: Some("recovery/".into()),
             },

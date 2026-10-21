@@ -2,6 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use crate::application::manifest::{seed_manifests_for_catalog_text, stale_marker_path, ENV_HOST_VAULT_STALE};
 use crate::application::render::{render_from_vault, RenderOptions, RENDER_SLOT_INDEX};
 use crate::application::sync::{
     sync_catalog_from_text, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX,
@@ -53,6 +54,8 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
     fs::create_dir_all(&root).unwrap();
     let state_dir = root.join("state");
     let dest = root.join("dest");
+    fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests_for_catalog_text(&state_dir, WORKER_CATALOG).unwrap();
     let ssm = MemorySsm::new();
     seed_worker_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -62,6 +65,9 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: crate::config::SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &sync_options).unwrap();
@@ -85,6 +91,7 @@ fn render_after_sync_writes_inject_only_with_file_modes_and_no_ssm() {
     let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
     assert!(env.contains("DB_PASS=db\n"));
     assert!(env.contains("WEBHOOK_HMAC=whsec\n"));
+    assert!(env.contains(&format!("{ENV_HOST_VAULT_STALE}=false\n")));
     assert!(!env.contains("APP_KEY"));
     assert!(!env.contains("API_SECRET"));
     assert!(!table.slot_ref(RENDER_SLOT_INDEX).unwrap().in_use());
@@ -188,11 +195,11 @@ fn render_gid_override_applies_group_readable_modes() {
     let _ = fs::remove_dir_all(&root);
     let state_dir = root.join("state");
     let dest = root.join("dest");
+    fs::create_dir_all(&state_dir).unwrap();
+    let web = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+    seed_manifests_for_catalog_text(&state_dir, web).unwrap();
     let ssm = MemorySsm::new();
-    ssm.put(
-        DEFAULT_CATALOG_PARAMETER,
-        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
-    );
+    ssm.put(DEFAULT_CATALOG_PARAMETER, web);
     ssm.put("/host-env-vault/app-web/DB_PASS", "secret");
     let kek = AgeKek::generate();
     let mut table = SlotTable::new();
@@ -205,6 +212,9 @@ fn render_gid_override_applies_group_readable_modes() {
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
             secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+            source: crate::config::SyncSourceKind::Ssm,
+            local_secrets_dir: None,
+            manifests_dir: None,
             s3_prefix: None,
         },
     )
@@ -259,5 +269,48 @@ fn render_uses_catalog_gid_when_cli_omits_override() {
     )
     .unwrap();
     assert_eq!(mode_of(&dest.join("secrets.env")), 0o440);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn render_injects_stale_true_when_marker_present() {
+    let root = temp_root("stale-true");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let state_dir = root.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    write_catalog_snapshot(
+        &state_dir,
+        r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
+    )
+    .unwrap();
+    let kek = AgeKek::generate();
+    let bundle = crate::vault::bundle::seal_bytes(
+        "app-web",
+        vec![crate::vault::bundle::Entry {
+            name: "DB_PASS".into(),
+            kind: Kind::Env,
+            bytes: zeroize::Zeroizing::new(b"secret".to_vec()),
+        }],
+        &kek,
+    )
+    .unwrap();
+    fs::write(
+        crate::application::sync::bundle_path(&state_dir, "app-web"),
+        bundle,
+    )
+    .unwrap();
+    fs::write(stale_marker_path(&state_dir, "app-web"), "manifest mismatch").unwrap();
+    let dest = root.join("dest");
+    let mut table = SlotTable::new();
+    render_from_vault(
+        &kek,
+        &mut table,
+        "app-web",
+        &RenderOptions::new(root.join("kek.age"), state_dir, dest.clone(), None),
+    )
+    .unwrap();
+    let env = fs::read_to_string(dest.join("secrets.env")).unwrap();
+    assert!(env.contains(&format!("{ENV_HOST_VAULT_STALE}=true\n")));
     let _ = fs::remove_dir_all(&root);
 }

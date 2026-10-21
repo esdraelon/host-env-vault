@@ -36,6 +36,10 @@ Create a **gitignored** `dev-shared/` beside the repo (see [docs/examples/dev-sh
 2. `./scripts/local-shared-bootstrap.sh` or `./scripts/local-shared-sync.sh`.
 3. `render` per profile before each compose stack starts.
 
+## Validate before sync
+
+After merging fragments (or editing SSM), run [`host-env-vault validate`](validate.md) to confirm every catalog entry resolves in Parameter Store or local dev files **without** sealing bundles. Optional `--manifest` cross-checks a per-app `.host-env-vault.toml` against the catalog allowlist.
+
 ## Future
 
 Native `sync --catalog-dir` may merge inside the binary; until then, `scripts/merge-catalog.sh` is the supported path.

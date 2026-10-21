@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use host_env_vault::config::{
     load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, SyncCliOverrides,
-    SyncSourceKind,
+    SyncSourceKind, ValidateCliOverrides,
 };
 use host_env_vault::ports::{S3Error, S3Port, SsmError};
 use host_env_vault::{AgeKek, ProfileId, SlotTable};
@@ -59,6 +59,29 @@ enum Command {
         dest: PathBuf,
         #[arg(long)]
         gid: Option<u32>,
+    },
+    /// Read-only dry-run: load catalog and secret entries without sealing bundles.
+    Validate {
+        #[arg(long, value_enum)]
+        source: Option<SyncSource>,
+        #[arg(long)]
+        catalog_param: Option<String>,
+        #[arg(long)]
+        secrets_prefix: Option<String>,
+        #[arg(long)]
+        local_secrets_dir: Option<PathBuf>,
+        #[arg(long)]
+        s3_bucket: Option<String>,
+        #[arg(long)]
+        s3_prefix: Option<String>,
+        /// Validate only this catalog profile (default: all profiles).
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Override manifest path for a single `--profile` (default: per-profile discovery).
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     /// Pull catalog and secrets into local sealed bundles (SSM or local dev files).
     Sync {
@@ -192,6 +215,67 @@ fn run() -> Result<(), host_env_vault::Error> {
                 out.display()
             );
         }
+        Command::Validate {
+            source,
+            catalog_param,
+            secrets_prefix,
+            local_secrets_dir,
+            s3_bucket,
+            s3_prefix,
+            profile,
+            state_dir,
+            manifest,
+        } => {
+            let resolved = file_config.resolve_validate(&ValidateCliOverrides {
+                state_dir,
+                source: source.map(SyncSourceKind::from),
+                catalog_param,
+                secrets_prefix,
+                local_secrets_dir,
+                manifests_dir: None,
+                s3_bucket,
+                s3_prefix,
+                profile,
+                manifest,
+            })?;
+            let mut options = host_env_vault::ValidateOptions::new(
+                resolved.catalog_param,
+                resolved.secrets_prefix,
+            )
+            .with_manifest_lookup(
+                resolved.state_dir,
+                resolved.source,
+                resolved.local_secrets_dir.clone(),
+                resolved.manifests_dir,
+            );
+            if let Some(filter) = resolved.profile {
+                options = options.with_profile(filter);
+            }
+            if let Some(path) = resolved.manifest {
+                options = options.with_manifest_override(path);
+            }
+            let aws_s3 = if let Some(bucket) = resolved.s3_bucket {
+                options = options.with_s3_prefix(resolved.s3_prefix.unwrap_or_default());
+                Some(AwsS3::from_env(bucket).map_err(map_cli_s3)?)
+            } else {
+                None
+            };
+            let s3_port = aws_s3.as_ref().map(|client| client as &dyn S3Port);
+            match resolved.source {
+                SyncSourceKind::Ssm => {
+                    let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                    host_env_vault::validate_from_ssm(&ssm, &options)?;
+                }
+                SyncSourceKind::Local => {
+                    let local_dir = resolved.local_secrets_dir.ok_or_else(|| {
+                        host_env_vault::Error::CatalogParse(
+                            "validate --source local requires local_secrets_dir in config or --local-secrets-dir".into(),
+                        )
+                    })?;
+                    host_env_vault::validate_from_local(&local_dir, s3_port, &options)?;
+                }
+            }
+        }
         Command::Sync {
             identity,
             state_dir,
@@ -209,6 +293,7 @@ fn run() -> Result<(), host_env_vault::Error> {
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
             })?;
@@ -219,6 +304,11 @@ fn run() -> Result<(), host_env_vault::Error> {
                 resolved.state_dir.clone(),
                 resolved.catalog_param,
                 resolved.secrets_prefix,
+            )
+            .with_manifest_lookup(
+                resolved.source,
+                resolved.local_secrets_dir.as_ref().cloned(),
+                resolved.manifests_dir.clone(),
             );
             let aws_s3 = if let Some(bucket) = resolved.s3_bucket {
                 options = options.with_s3_prefix(resolved.s3_prefix.unwrap_or_default());

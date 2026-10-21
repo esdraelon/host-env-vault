@@ -4,6 +4,7 @@ use crate::application::hydrate::{
     hydrate_gh_from_vault, hydrate_gh_with_catalog, HydrateGhOptions, GITHUB_PROFILE,
     HYDRATE_SLOT_INDEX,
 };
+use crate::application::manifest::seed_manifests_for_catalog_text;
 use crate::application::sync::{sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
 use crate::catalog::{parse_catalog_text, write_catalog_snapshot, SealEntry};
 use crate::core::slot::SlotTable;
@@ -168,6 +169,7 @@ fn hydrate_gh_after_sync_does_not_call_ssm() {
     let kek = AgeKek::generate();
     let identity = state_dir.join("kek.age");
     kek.write_identity(&identity).unwrap();
+    seed_manifests_for_catalog_text(&state_dir, GITHUB_CATALOG).unwrap();
     let mut table = SlotTable::new();
     let sync_options = SyncOptions::new(
         identity.clone(),

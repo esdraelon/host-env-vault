@@ -6,6 +6,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
+    use crate::application::manifest::seed_manifests_for_catalog_text;
     use crate::application::sync::{bundle_path, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX};
     use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
     use crate::core::error::Error;
@@ -74,11 +75,10 @@ mod tests {
         let bundle_file = bundle_path(&state_dir, "app-web");
         std::fs::write(&bundle_file, &stale).unwrap();
 
+        let catalog = r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+        seed_manifests_for_catalog_text(&state_dir, catalog).unwrap();
         let ssm = MemorySsm::new();
-        ssm.put(
-            DEFAULT_CATALOG_PARAMETER,
-            r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#,
-        );
+        ssm.put(DEFAULT_CATALOG_PARAMETER, catalog);
 
         let mut table = SlotTable::new();
         let options = SyncOptions {
@@ -86,6 +86,9 @@ mod tests {
             state_dir: state_dir.clone(),
             catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
             secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+            source: crate::config::SyncSourceKind::Ssm,
+            local_secrets_dir: None,
+            manifests_dir: None,
             s3_prefix: None,
         };
         assert!(matches!(

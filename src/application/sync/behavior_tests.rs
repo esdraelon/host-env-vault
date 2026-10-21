@@ -1,11 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use crate::application::manifest::{default_manifests_dir, stale_marker_path, write_manifest_for_profile};
 use crate::application::sync::{
     bundle_path, sync_from_ports, sync_from_ssm, SyncOptions, SYNC_SLOT_INDEX,
 };
 use crate::application::sync::{load_or_create_identity, sync_catalog_from_text};
 use crate::catalog::parse_catalog_text;
 use crate::catalog::{DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
+use crate::config::SyncSourceKind;
 use crate::core::error::Error;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
 use crate::legacy::profile::Kind;
@@ -47,6 +49,14 @@ fn seed_two_profile_ssm(ssm: &MemorySsm) {
     ssm.put("/host-env-vault/edge-proxy/API_SECRET", "sk_live");
 }
 
+fn seed_manifests(state_dir: &Path, catalog_text: &str) {
+    let catalog = parse_catalog_text(catalog_text).unwrap();
+    let dir = default_manifests_dir(state_dir);
+    for name in catalog.profile_names() {
+        write_manifest_for_profile(&dir, catalog.profile(name).unwrap()).unwrap();
+    }
+}
+
 #[test]
 fn sync_writes_bundle_with_empty_state_dir_parent() {
     let work = temp_state_dir("flat-bundle");
@@ -54,6 +64,7 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
     std::fs::create_dir_all(&work).unwrap();
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(&work).unwrap();
+    seed_manifests(Path::new("."), WEB_CATALOG);
     let ssm = MemorySsm::new();
     seed_web_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -63,6 +74,9 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
         state_dir: PathBuf::from("."),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -75,6 +89,8 @@ fn sync_writes_bundle_with_empty_state_dir_parent() {
 fn sync_success_replaces_bundle_on_disk() {
     let state_dir = temp_state_dir("success");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_CATALOG);
     let ssm = MemorySsm::new();
     seed_web_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -84,6 +100,9 @@ fn sync_success_replaces_bundle_on_disk() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -124,6 +143,7 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
 
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
+    seed_manifests(&state_dir, WEB_CATALOG);
     // DB_PASS parameter intentionally missing
 
     let mut table = SlotTable::new();
@@ -132,6 +152,9 @@ fn sync_failed_pull_keeps_previous_bundle_bytes() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     assert!(matches!(
@@ -168,6 +191,8 @@ fn pull_from_ssm_does_not_occupy_sync_slot() {
 fn sync_two_profiles_leaves_slot_free_between_and_after() {
     let state_dir = temp_state_dir("two-profiles");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, TWO_PROFILE_CATALOG);
     let ssm = MemorySsm::new();
     seed_two_profile_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -177,6 +202,9 @@ fn sync_two_profiles_leaves_slot_free_between_and_after() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -217,6 +245,9 @@ fn missing_catalog_parameter_fails_without_writing_bundles() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     assert!(matches!(
@@ -250,6 +281,9 @@ fn unavailable_catalog_ssm_maps_to_parse_error() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     assert!(matches!(
@@ -278,6 +312,8 @@ fn sync_catalog_from_text_matches_ssm_catalog_path() {
 fn max_length_ssm_value_is_accepted() {
     let state_dir = temp_state_dir("max-len");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_CATALOG);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
     let value = "x".repeat(SECRET_MAX_BYTES);
@@ -289,6 +325,9 @@ fn max_length_ssm_value_is_accepted() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -314,6 +353,8 @@ const FILE_CATALOG: &str = r#"{
 fn file_entries_skip_env_line_validation() {
     let state_dir = temp_state_dir("file-entry");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, FILE_CATALOG);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, FILE_CATALOG);
     ssm.put("/host-env-vault/app-worker/client.key", "line-one\nline-two");
@@ -324,6 +365,9 @@ fn file_entries_skip_env_line_validation() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
@@ -360,6 +404,8 @@ fn sync_catalog_from_text_counts_profile_failures() {
 fn invalid_env_value_from_ssm_is_rejected() {
     let state_dir = temp_state_dir("bad-env");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_CATALOG);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, WEB_CATALOG);
     ssm.put("/host-env-vault/app-web/DB_PASS", "bad\nline");
@@ -370,6 +416,9 @@ fn invalid_env_value_from_ssm_is_rejected() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     assert!(matches!(
@@ -392,6 +441,8 @@ const NGINX_DOC_CATALOG: &str = r#"{
 fn sync_seals_nginx_documents_from_fake_s3() {
     let state_dir = temp_state_dir("nginx-s3");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, NGINX_DOC_CATALOG);
     let ssm = MemorySsm::new();
     ssm.put(DEFAULT_CATALOG_PARAMETER, NGINX_DOC_CATALOG);
     let s3 = MemoryS3::new();
@@ -403,6 +454,9 @@ fn sync_seals_nginx_documents_from_fake_s3() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: Some("recovery".into()),
     };
     sync_from_ports(&ssm, Some(&s3), &kek, &mut table, &options).unwrap();
@@ -420,6 +474,8 @@ fn sync_seals_nginx_documents_from_fake_s3() {
 fn atomic_replace_does_not_leave_tmp_when_rename_succeeds() {
     let state_dir = temp_state_dir("atomic");
     let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_CATALOG);
     let ssm = MemorySsm::new();
     seed_web_ssm(&ssm);
     let kek = AgeKek::generate();
@@ -429,9 +485,91 @@ fn atomic_replace_does_not_leave_tmp_when_rename_succeeds() {
         state_dir: state_dir.clone(),
         catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
         secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
         s3_prefix: None,
     };
     sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
     assert!(!state_dir.join("app-web.hev.tmp").exists());
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+#[test]
+fn sync_manifest_mismatch_keeps_hev_and_writes_stale_marker() {
+    let state_dir = temp_state_dir("manifest-stale");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let kek = AgeKek::generate();
+    let prior = seal_bytes(
+        "app-web",
+        vec![Entry {
+            name: "DB_PASS".into(),
+            kind: Kind::Env,
+            bytes: Zeroizing::new(b"keep-me".to_vec()),
+        }],
+        &kek,
+    )
+    .unwrap();
+    let bundle_file = bundle_path(&state_dir, "app-web");
+    std::fs::write(&bundle_file, &prior).unwrap();
+    std::fs::create_dir_all(default_manifests_dir(&state_dir)).unwrap();
+    std::fs::write(
+        default_manifests_dir(&state_dir).join("app-web.env-host-vault"),
+        r#"profile = "app-web"
+[inject]
+env = []
+files = []
+[runtime]
+env = []
+files = []
+"#,
+    )
+    .unwrap();
+    let ssm = MemorySsm::new();
+    seed_web_ssm(&ssm);
+    let mut table = SlotTable::new();
+    let options = SyncOptions {
+        identity_path: state_dir.join("kek.age"),
+        state_dir: state_dir.clone(),
+        catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
+        s3_prefix: None,
+    };
+    assert!(matches!(
+        sync_from_ssm(&ssm, &kek, &mut table, &options),
+        Err(Error::SyncFailed { count: 1 })
+    ));
+    assert_eq!(std::fs::read(&bundle_file).unwrap(), prior);
+    assert!(stale_marker_path(&state_dir, "app-web").is_file());
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+#[test]
+fn sync_success_clears_stale_marker() {
+    let state_dir = temp_state_dir("clear-stale");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    seed_manifests(&state_dir, WEB_CATALOG);
+    std::fs::write(stale_marker_path(&state_dir, "app-web"), "old failure").unwrap();
+    let ssm = MemorySsm::new();
+    seed_web_ssm(&ssm);
+    let kek = AgeKek::generate();
+    let mut table = SlotTable::new();
+    let options = SyncOptions {
+        identity_path: state_dir.join("kek.age"),
+        state_dir: state_dir.clone(),
+        catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+        secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+        source: SyncSourceKind::Ssm,
+        local_secrets_dir: None,
+        manifests_dir: None,
+        s3_prefix: None,
+    };
+    sync_from_ssm(&ssm, &kek, &mut table, &options).unwrap();
+    assert!(!stale_marker_path(&state_dir, "app-web").exists());
     let _ = std::fs::remove_dir_all(&state_dir);
 }

@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
+use crate::application::manifest::{profile_is_stale, ENV_HOST_VAULT_STALE};
 use crate::application::sync::{bundle_path, DEFAULT_STATE_DIR};
+use crate::legacy::profile::Kind;
 use crate::catalog::{load_catalog_snapshot, Catalog, ProfileDefinition};
 use crate::core::error::Error;
 use crate::core::slot::{SlotError, SlotTable};
@@ -99,7 +101,12 @@ pub fn render_profile_with_catalog(
                 expected: profile_name.to_owned(),
             });
         }
-        let inject_entries = inject_only_entries(definition, &opened.entries);
+        let mut inject_entries = inject_only_entries(definition, &opened.entries);
+        append_stale_inject_line(
+            &mut inject_entries,
+            profile_name,
+            &options.state_dir,
+        );
         let gid = options.gid_override.or(definition.gid);
         let mode = RenderMode::from_gid(gid);
         render(&options.dest, &inject_entries, mode)?;
@@ -114,6 +121,26 @@ pub fn render_profile_with_catalog(
     })();
     let _ = table.release(lease);
     render_result
+}
+
+fn append_stale_inject_line(
+    inject: &mut Vec<Entry>,
+    profile_name: &str,
+    state_dir: &std::path::Path,
+) {
+    let stale = profile_is_stale(state_dir, profile_name);
+    let value = if stale {
+        Zeroizing::new(b"true".to_vec())
+    } else {
+        Zeroizing::new(b"false".to_vec())
+    };
+    inject.retain(|entry| entry.name != ENV_HOST_VAULT_STALE);
+    inject.push(Entry {
+        name: ENV_HOST_VAULT_STALE.to_owned(),
+        kind: Kind::Env,
+        bytes: value,
+    });
+    inject.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
 fn inject_only_entries(definition: &ProfileDefinition, entries: &[Entry]) -> Vec<Entry> {

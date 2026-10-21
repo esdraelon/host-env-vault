@@ -66,6 +66,7 @@ Manual steps below are equivalent if you prefer hand-editing SSM and JSON.
 
 | When | What you do |
 | --- | --- |
+| Before sync / in CI | `host-env-vault validate …` (read-only; requires per-profile `{profile}.env-host-vault` manifests; no `.hev` writes) |
 | Secret rotated in SSM | `host-env-vault sync …` |
 | New deploy | `host-env-vault render --profile app-web --dest /run/host-env-vault/app-web/current …` then restart the container |
 | Runtime-only secret | App connects to `/run/host-env-vault/sockets/<profile>.sock` (no re-render) |
@@ -89,6 +90,7 @@ source = "ssm"   # or "local"
 catalog_param = "/host-env-vault/profiles"
 secrets_prefix = "/host-env-vault"
 local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
+# manifests_dir = "/var/lib/host-env-vault/manifests"  # default: {state_dir}/manifests
 # s3_bucket = "my-recovery-bucket"
 # s3_prefix = "recovery/"
 ```
@@ -106,6 +108,11 @@ host-env-vault serve --profile app-worker
 `sync`, `render`, and `serve` read `identity`, `state_dir`, and (for serve) `runtime_dir` from the config file when flags are omitted. `state_dir` defaults to `/var/lib/host-env-vault` if neither flag nor file sets it.
 
 ```bash
+# Dry-run: confirm catalog + SSM entries (no identity, no bundles)
+host-env-vault validate \
+  --catalog-param /host-env-vault/profiles \
+  --secrets-prefix /host-env-vault
+
 # Refresh all profiles from AWS
 host-env-vault sync \
   --identity /etc/host-env-vault/kek.age \
