@@ -370,6 +370,16 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 
 **Acceptance.** Integration test with mock paths; docs in [`docs/validate.md`](validate.md) or new `docs/transition.md`.
 
+- [x] **M21** `stack/m21-store-export-ssm` — `store export --format ssm`, `--dry-run`, transition docs, export tests.
+
+### M21 completion
+
+- **Branch:** `stack/m21-store-export-ssm`
+- **What changed:** `store export --format ssm` emits a put-parameter bash script or `--json` SHA256 manifest; `--dry-run` prints `{prefix}/{profile}/{entry}` paths and hashes only; `[sync] secrets_prefix` merged into store resolve; [`docs/transition.md`](transition.md) cutover checklist; link from [`docs/validate.md`](validate.md).
+- **Log-tested branches:** `store export: ssm dry-run`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m21-store-export-ssm`)
+- **Gate:** `./scripts/gate.sh test` — **276** passed; `./scripts/gate.sh mutants -- --file src/application/store/export.rs` — **13/13 caught**; `./scripts/gate.sh mutants -- --file src/config/mod.rs` — **12/12 viable caught** (5 unviable).
+
 ## M22 — SQLite alternative backend (dual engines)
 
 **Problem.** Per-profile flat files are simple but awkward for frequent partial rotation; offer **both** backends.

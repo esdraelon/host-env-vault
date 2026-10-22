@@ -133,6 +133,7 @@ pub struct StoreCliOverrides {
     pub identity: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
     pub store_dir: Option<PathBuf>,
+    pub secrets_prefix: Option<String>,
 }
 
 /// Resolved store settings after merge (file then CLI over defaults).
@@ -140,6 +141,7 @@ pub struct StoreCliOverrides {
 pub struct ResolvedStore {
     pub identity: PathBuf,
     pub store_dir: PathBuf,
+    pub secrets_prefix: String,
 }
 
 /// Path from `--config`, then `HOST_ENV_VAULT_CONFIG`, then [`DEFAULT_CONFIG_PATH`].
@@ -327,9 +329,15 @@ impl FileConfig {
             self.sync.store_dir.as_ref(),
             &state_dir,
         );
+        let secrets_prefix = pick_string(
+            cli.secrets_prefix.as_deref(),
+            self.sync.secrets_prefix.as_deref(),
+            DEFAULT_SECRETS_PREFIX,
+        );
         Ok(ResolvedStore {
             identity,
             store_dir,
+            secrets_prefix,
         })
     }
 

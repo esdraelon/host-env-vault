@@ -2,7 +2,8 @@ use serial_test::serial;
 use std::fs;
 
 use crate::application::store::{
-    store_import_from_dev_dir, store_init, store_put, store_rekey, StoreOptions,
+    store_export_ssm, store_import_from_dev_dir, store_init, store_put, store_rekey,
+    StoreExportOutput, StoreExportSsmOptions, StoreOptions,
 };
 use crate::ports::LOCAL_CATALOG_FILE;
 use crate::testing::log_test_capture::capture_info_logs;
@@ -100,6 +101,35 @@ fn log_store_rekey_rotated() {
     });
     assert!(
         text.contains("store rekey: profiles rotated"),
+        "logs: {text}"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[serial]
+#[test]
+fn log_store_export_ssm_dry_run() {
+    let root = temp_root("export-log");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let opts = options(&root);
+    let kek = AgeKek::generate();
+    store_put(&opts, "app-web", "K", "v", &kek).unwrap();
+    let text = capture_info_logs(|| {
+        store_export_ssm(
+            &opts,
+            &StoreExportSsmOptions {
+                secrets_prefix: "/host-env-vault".into(),
+                dry_run: true,
+                output: StoreExportOutput::Script,
+                profile_filter: None,
+            },
+            &kek,
+        )
+        .unwrap();
+    });
+    assert!(
+        text.contains("store export: ssm dry-run"),
         "logs: {text}"
     );
     let _ = fs::remove_dir_all(&root);

@@ -1,10 +1,9 @@
 //! **Store command** — CRUD for encrypted per-profile host store files (transition mode).
 
-use std::io::{self, IsTerminal, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tracing::info;
-use zeroize::Zeroizing;
 
 use crate::application::sync::load_or_create_identity;
 use crate::catalog::{parse_catalog_text, ProfileDefinition};
@@ -14,6 +13,15 @@ use crate::vault::host_store::{
     ensure_store_dir, list_stored_profiles, read_profile_store, write_profile_store,
 };
 use crate::vault::kek::AgeKek;
+
+pub mod export;
+pub mod interactive;
+
+pub use export::{
+    store_export_ssm, StoreExportFormat, StoreExportOutput, StoreExportParameter,
+    StoreExportSsmOptions,
+};
+pub use interactive::{resolve_field, resolve_secret_value};
 
 /// Resolved paths for a store subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,104 +298,11 @@ pub fn mask_secret(value: &str) -> String {
     format!("*** ({} bytes)", value.len())
 }
 
-/// Resolve a flag or prompt on a TTY when interactive.
-pub fn resolve_field(
-    label: &str,
-    flag_value: Option<String>,
-    non_interactive: bool,
-) -> Result<String, Error> {
-    if let Some(value) = flag_value {
-        if value.is_empty() {
-            return Err(Error::CatalogParse(format!("{label} must not be empty")));
-        }
-        return Ok(value);
-    }
-    if non_interactive || !io::stdin().is_terminal() {
-        return Err(Error::CatalogParse(format!(
-            "missing {label} (pass flag or run on a TTY without --non-interactive)"
-        )));
-    }
-    prompt_line(&format!("{label}: "))
-}
-
-/// Resolve a secret value from flag, TTY (hidden), or error in non-interactive mode.
-pub fn resolve_secret_value(
-    flag_value: Option<String>,
-    file_path: Option<PathBuf>,
-    non_interactive: bool,
-) -> Result<Zeroizing<String>, Error> {
-    if let Some(path) = file_path {
-        let bytes = std::fs::read(&path).map_err(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                Error::SsmMissing(path.display().to_string())
-            } else {
-                Error::Io(err)
-            }
-        })?;
-        return Ok(Zeroizing::new(String::from_utf8(bytes).map_err(|err| {
-            Error::CatalogParse(format!("secret file is not utf-8: {err}"))
-        })?));
-    }
-    if let Some(value) = flag_value {
-        return Ok(Zeroizing::new(value));
-    }
-    if non_interactive || !io::stdin().is_terminal() {
-        return Err(Error::CatalogParse(
-            "missing secret value (pass --value, --value-file, or run on a TTY without --non-interactive)".into(),
-        ));
-    }
-    Ok(Zeroizing::new(prompt_secret_hidden("Secret value: ")?))
-}
-
-fn prompt_line(prompt: &str) -> Result<String, Error> {
-    eprint!("{prompt}");
-    io::stderr().flush().map_err(Error::Io)?;
-    let mut line = String::new();
-    io::stdin().read_line(&mut line).map_err(Error::Io)?;
-    let line = line.trim_end_matches(['\r', '\n']).to_owned();
-    if line.is_empty() {
-        return Err(Error::CatalogParse("empty input".into()));
-    }
-    Ok(line)
-}
-
-#[cfg(unix)]
-fn prompt_secret_hidden(prompt: &str) -> Result<String, Error> {
-    use std::os::fd::AsRawFd;
-
-    eprint!("{prompt}");
-    io::stderr().flush().map_err(Error::Io)?;
-
-    let stdin = io::stdin();
-    let fd = stdin.as_raw_fd();
-    let mut termios = unsafe { std::mem::zeroed() };
-    if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
-        return Err(Error::CatalogParse("terminal unavailable for hidden input".into()));
-    }
-    let saved = termios;
-    termios.c_lflag &= !libc::ECHO;
-    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
-        return Err(Error::CatalogParse("terminal unavailable for hidden input".into()));
-    }
-    let mut line = String::new();
-    let read_result = io::stdin().read_line(&mut line);
-    let _ = unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
-    eprintln!();
-    read_result.map_err(Error::Io)?;
-    let line = line.trim_end_matches(['\r', '\n']).to_owned();
-    if line.is_empty() {
-        return Err(Error::CatalogParse("empty secret value".into()));
-    }
-    Ok(line)
-}
-
-#[cfg(not(unix))]
-fn prompt_secret_hidden(prompt: &str) -> Result<String, Error> {
-    prompt_line(prompt)
-}
-
 #[cfg(test)]
 mod behavior_tests;
+
+#[cfg(test)]
+mod export_tests;
 
 #[cfg(test)]
 mod log_tests;

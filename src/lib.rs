@@ -41,9 +41,10 @@ pub use application::serve::{
     bind_serve_socket, fetch_runtime_entry, serve_profile_forever, ServeOptions, SERVE_SLOT_INDEX,
 };
 pub use application::store::{
-    mask_secret, resolve_field, resolve_secret_value, store_get, store_import_from_dev_dir,
-    store_import_from_env_file, store_init, store_list, store_put, store_remove, store_rekey,
-    StoreOptions, StoreProfileListing,
+    mask_secret, resolve_field, resolve_secret_value, store_export_ssm, store_get,
+    store_import_from_dev_dir, store_import_from_env_file, store_init, store_list, store_put,
+    store_remove, store_rekey, StoreExportFormat, StoreExportOutput, StoreExportParameter,
+    StoreExportSsmOptions, StoreOptions, StoreProfileListing,
 };
 pub use application::sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter,

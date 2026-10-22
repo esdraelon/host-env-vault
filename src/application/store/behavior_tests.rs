@@ -1,8 +1,8 @@
 use std::fs;
 
 use crate::application::store::{
-    mask_secret, resolve_field, store_get, store_import_from_dev_dir, store_import_from_env_file,
-    store_init, store_list, store_put, store_remove, store_rekey, StoreOptions,
+    mask_secret, store_get, store_import_from_dev_dir, store_import_from_env_file, store_init,
+    store_list, store_put, store_remove, store_rekey, StoreOptions,
 };
 use crate::core::error::Error;
 use crate::ports::LOCAL_CATALOG_FILE;
@@ -212,18 +212,3 @@ fn store_put_rejects_invalid_profile_or_entry_names() {
     let _ = fs::remove_dir_all(&root);
 }
 
-#[test]
-fn resolve_field_uses_flag_and_rejects_empty_non_interactive() {
-    assert_eq!(
-        resolve_field("profile", Some("app-web".into()), true).unwrap(),
-        "app-web"
-    );
-    assert!(matches!(
-        resolve_field("profile", None, true),
-        Err(Error::CatalogParse(_))
-    ));
-    assert!(matches!(
-        resolve_field("profile", Some(String::new()), true),
-        Err(Error::CatalogParse(_))
-    ));
-}

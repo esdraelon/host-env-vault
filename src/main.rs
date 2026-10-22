@@ -10,9 +10,9 @@ use host_env_vault::config::{
 };
 use host_env_vault::ports::{S3Error, S3Port, SsmError};
 use host_env_vault::{
-    resolve_field, resolve_secret_value, store_get, store_import_from_dev_dir,
+    resolve_field, resolve_secret_value, store_export_ssm, store_get, store_import_from_dev_dir,
     store_import_from_env_file, store_init, store_list, store_put, store_remove, store_rekey,
-    AgeKek, ProfileId, SlotTable, StoreOptions,
+    AgeKek, ProfileId, SlotTable, StoreExportOutput, StoreExportSsmOptions, StoreOptions,
 };
 
 use adapters::aws_s3::AwsS3;
@@ -213,6 +213,27 @@ enum StoreCommand {
         #[arg(long)]
         new_identity: PathBuf,
     },
+    /// Emit SSM migration artifacts from the encrypted host store.
+    Export {
+        #[arg(long, value_enum)]
+        format: CliStoreExportFormat,
+        /// Print parameter paths and SHA256 only (no script or manifest body).
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        secrets_prefix: Option<String>,
+        /// Limit export to one catalog profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Write JSON manifest (SHA256 references) instead of a put-parameter shell script.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CliStoreExportFormat {
+    Ssm,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -576,6 +597,7 @@ fn run_store(
         identity: store_cli.identity,
         state_dir: store_cli.state_dir,
         store_dir: store_cli.store_dir,
+        secrets_prefix: None,
     })?;
     let options = StoreOptions {
         identity_path: resolved.identity.clone(),
@@ -676,6 +698,32 @@ fn run_store(
                 "rekeyed {count} profile store files (new identity {})",
                 new_identity.display()
             );
+        }
+        StoreCommand::Export {
+            format: _,
+            dry_run,
+            secrets_prefix,
+            profile,
+            json,
+        } => {
+            let prefix = secrets_prefix.unwrap_or(resolved.secrets_prefix);
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let output = if json {
+                StoreExportOutput::JsonManifest
+            } else {
+                StoreExportOutput::Script
+            };
+            let body = store_export_ssm(
+                &options,
+                &StoreExportSsmOptions {
+                    secrets_prefix: prefix,
+                    dry_run,
+                    output,
+                    profile_filter: profile,
+                },
+                &kek,
+            )?;
+            print!("{body}");
         }
     }
     Ok(())
