@@ -5,11 +5,15 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use host_env_vault::config::{
-    load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, SyncCliOverrides,
-    SyncSourceKind, ValidateCliOverrides,
+    load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, StoreCliOverrides,
+    SyncCliOverrides, SyncSourceKind, ValidateCliOverrides,
 };
 use host_env_vault::ports::{S3Error, S3Port, SsmError};
-use host_env_vault::{AgeKek, ProfileId, SlotTable};
+use host_env_vault::{
+    resolve_field, resolve_secret_value, store_get, store_import_from_dev_dir,
+    store_import_from_env_file, store_init, store_list, store_put, store_remove, store_rekey,
+    AgeKek, ProfileId, SlotTable, StoreOptions,
+};
 
 use adapters::aws_s3::AwsS3;
 use adapters::aws_ssm::AwsSsm;
@@ -134,6 +138,80 @@ enum Command {
     Hydrate {
         #[command(subcommand)]
         target: HydrateTarget,
+    },
+    /// Manage encrypted per-profile host store files (transition mode).
+    Store(StoreCli),
+}
+
+#[derive(Parser)]
+struct StoreCli {
+    #[arg(long)]
+    identity: Option<PathBuf>,
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+    #[arg(long)]
+    store_dir: Option<PathBuf>,
+    /// Fail instead of prompting when required fields are missing.
+    #[arg(long)]
+    non_interactive: bool,
+    #[command(subcommand)]
+    command: StoreCommand,
+}
+
+#[derive(Subcommand)]
+enum StoreCommand {
+    /// Create the store directory and ensure the host age identity exists.
+    Init,
+    /// Upsert one secret entry for a catalog profile.
+    #[command(visible_alias = "set")]
+    Put {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        value: Option<String>,
+        #[arg(long)]
+        value_file: Option<PathBuf>,
+    },
+    /// Read one entry (masked unless `--show`).
+    Get {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        /// Print the plaintext secret (default output is masked).
+        #[arg(long)]
+        show: bool,
+    },
+    /// List profiles and entry names in the store.
+    List {
+        /// Limit output to one profile.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Delete one entry from a profile store file.
+    Remove {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Import from a dev layout directory or a single profile env file.
+    Import {
+        /// Directory with `catalog.json`, `{profile}.env`, and optional `files/`.
+        #[arg(long)]
+        from_dir: Option<PathBuf>,
+        /// Env file whose keys are imported into `--profile`.
+        #[arg(long)]
+        from_env_file: Option<PathBuf>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Re-encrypt all profile store files with a new host age identity.
+    Rekey {
+        #[arg(long)]
+        new_identity: PathBuf,
     },
 }
 
@@ -485,6 +563,120 @@ fn run() -> Result<(), host_env_vault::Error> {
                 eprintln!("hydrated gh from {}", state_dir.display());
             }
         },
+        Command::Store(store_cli) => run_store(&file_config, store_cli)?,
+    }
+    Ok(())
+}
+
+fn run_store(
+    file_config: &host_env_vault::FileConfig,
+    store_cli: StoreCli,
+) -> Result<(), host_env_vault::Error> {
+    let resolved = file_config.resolve_store(&StoreCliOverrides {
+        identity: store_cli.identity,
+        state_dir: store_cli.state_dir,
+        store_dir: store_cli.store_dir,
+    })?;
+    let options = StoreOptions {
+        identity_path: resolved.identity.clone(),
+        store_dir: resolved.store_dir.clone(),
+    };
+    let non_interactive = store_cli.non_interactive;
+    match store_cli.command {
+        StoreCommand::Init => {
+            store_init(&options)?;
+            eprintln!(
+                "store ready at {} (identity {})",
+                options.store_dir.display(),
+                options.identity_path.display()
+            );
+        }
+        StoreCommand::Put {
+            profile,
+            name,
+            value,
+            value_file,
+        } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let secret = resolve_secret_value(value, value_file, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            store_put(&options, &profile, &name, &secret, &kek)?;
+            eprintln!("stored {profile}/{name}");
+        }
+        StoreCommand::Get {
+            profile,
+            name,
+            show,
+        } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let out = store_get(&options, &profile, &name, &kek, show)?;
+            println!("{out}");
+        }
+        StoreCommand::List { profile } => {
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let mut listings = store_list(&options, &kek)?;
+            if let Some(filter) = profile {
+                listings.retain(|row| row.profile == filter);
+            }
+            if listings.is_empty() {
+                eprintln!("(no profiles in store)");
+            } else {
+                for row in listings {
+                    println!("{}:", row.profile);
+                    for entry in row.entries {
+                        println!("  {entry}");
+                    }
+                }
+            }
+        }
+        StoreCommand::Remove { profile, name } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            store_remove(&options, &profile, &name, &kek)?;
+            eprintln!("removed {profile}/{name}");
+        }
+        StoreCommand::Import {
+            from_dir,
+            from_env_file,
+            profile,
+        } => {
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            match (from_dir, from_env_file) {
+                (Some(dir), None) => {
+                    let count =
+                        store_import_from_dev_dir(&options, &dir, profile.as_deref(), &kek)?;
+                    eprintln!("imported {count} entries from {}", dir.display());
+                }
+                (None, Some(path)) => {
+                    let profile = resolve_field("profile", profile, non_interactive)?;
+                    let count = store_import_from_env_file(&options, &profile, &path, &kek)?;
+                    eprintln!("imported {count} entries from {}", path.display());
+                }
+                (Some(_), Some(_)) => {
+                    return Err(host_env_vault::Error::CatalogParse(
+                        "import: pass only one of --from-dir or --from-env-file".into(),
+                    ));
+                }
+                (None, None) => {
+                    return Err(host_env_vault::Error::CatalogParse(
+                        "import: pass --from-dir or --from-env-file".into(),
+                    ));
+                }
+            }
+        }
+        StoreCommand::Rekey { new_identity } => {
+            let old_kek = AgeKek::read_identity(&options.identity_path)?;
+            let new_kek = AgeKek::read_identity(&new_identity)?;
+            let count = store_rekey(&options, &old_kek, &new_kek)?;
+            eprintln!(
+                "rekeyed {count} profile store files (new identity {})",
+                new_identity.display()
+            );
+        }
     }
     Ok(())
 }

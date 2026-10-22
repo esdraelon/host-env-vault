@@ -84,5 +84,35 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
     Ok(())
 }
 
+/// Profile names that have a `{profile}.secrets.age` file in `store_dir`.
+pub fn list_stored_profiles(store_dir: &Path) -> Result<Vec<String>, Error> {
+    let mut names = Vec::new();
+    if !store_dir.is_dir() {
+        return Ok(names);
+    }
+    for entry in fs::read_dir(store_dir)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if let Some(profile) = file_name.strip_suffix(PROFILE_SECRETS_SUFFIX) {
+            if !profile.is_empty() {
+                names.push(profile.to_owned());
+            }
+        }
+    }
+    names.sort_unstable();
+    Ok(names)
+}
+
+/// Create the store root with restrictive permissions.
+pub fn ensure_store_dir(store_dir: &Path) -> Result<(), Error> {
+    if store_dir.as_os_str().is_empty() {
+        return Err(Error::CatalogParse("store_dir path is empty".into()));
+    }
+    fs::create_dir_all(store_dir)?;
+    set_mode(store_dir, 0o700)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod behavior_tests;

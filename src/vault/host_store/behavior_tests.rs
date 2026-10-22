@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use super::*;
+use super::{ensure_store_dir, list_stored_profiles, *};
 use crate::vault::kek::AgeKek;
 
 fn temp_store_root(label: &str) -> std::path::PathBuf {
@@ -46,6 +46,32 @@ fn read_profile_store_maps_missing_file() {
         read_profile_store(&root, "app-web", &kek),
         Err(crate::core::error::Error::SsmMissing(path)) if path.contains("app-web.secrets.age")
     ));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn list_stored_profiles_scans_secrets_age_files() {
+    let root = temp_store_root("list");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let kek = AgeKek::generate();
+    let mut entries = HashMap::new();
+    entries.insert("K".into(), "v".into());
+    write_profile_store(&root, "app-worker", &entries, &kek).unwrap();
+    fs::write(root.join("notes.txt"), "skip").unwrap();
+    let names = list_stored_profiles(&root).unwrap();
+    assert_eq!(names, vec!["app-worker".to_string()]);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn ensure_store_dir_sets_restrictive_mode() {
+    let root = temp_store_root("ensure");
+    let _ = fs::remove_dir_all(&root);
+    ensure_store_dir(&root).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
     let _ = fs::remove_dir_all(&root);
 }
 

@@ -86,10 +86,11 @@ state_dir = "/var/lib/host-env-vault"
 runtime_dir = "/run/host-env-vault"
 
 [sync]
-source = "ssm"   # or "local"
+source = "ssm"   # or "local" or "host-store"
 catalog_param = "/host-env-vault/profiles"
 secrets_prefix = "/host-env-vault"
-local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
+local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local or host-store catalog on disk
+# store_dir = "/var/lib/host-env-vault/store"  # default: {state_dir}/store; host-store entries
 # manifests_dir = "/var/lib/host-env-vault/manifests"  # default: {state_dir}/manifests
 # s3_bucket = "my-recovery-bucket"
 # s3_prefix = "recovery/"
@@ -238,6 +239,49 @@ host-env-vault sync \
 ```
 
 `--source` defaults to `ssm`. Local sync does not call the AWS SDK for catalog or secrets; optional `--s3-bucket` still pulls catalog **documents** from S3 when configured. After sync, `render` and `serve` behave the same as in production (local bundles only).
+
+### Transition deployment (host encrypted store)
+
+When SSM is not ready yet, keep secrets **encrypted on the host** instead of plaintext in compose files. The same age identity that seals `.hev` bundles also encrypts per-profile store files at `{store_dir}/{profile}.secrets.age` (default `{state_dir}/store`).
+
+1. **Initialize** the store layout and host identity (creates `kek.age` when missing):
+
+   ```bash
+   sudo host-env-vault store init \
+     --identity /etc/host-env-vault/kek.age \
+     --state-dir /var/lib/host-env-vault
+   ```
+
+2. **Load secrets** without editing decrypted files (no `$EDITOR` workflow):
+
+   ```bash
+   # Interactive prompts on a TTY; use --non-interactive plus flags in scripts
+   host-env-vault store put --profile app-web --name DB_PASS --value '…'
+
+   # Bulk import from the same layout as local dev sync
+   host-env-vault store import --from-dir ./dev-secrets
+
+   # Or import every KEY=value line from one env file
+   host-env-vault store import --from-env-file ./app-web.env --profile app-web
+   ```
+
+3. **Point sync at the store** (catalog still from SSM or local `catalog.json`):
+
+   ```toml
+   [sync]
+   source = "host-store"
+   store_dir = "/var/lib/host-env-vault/store"
+   local_secrets_dir = "/etc/host-env-vault/dev"   # optional: catalog.json on disk
+   ```
+
+   ```bash
+   host-env-vault validate --source host-store --identity /etc/host-env-vault/kek.age
+   host-env-vault sync --source host-store --identity /etc/host-env-vault/kek.age
+   ```
+
+4. **Operate the store**: `store list`, `store get` (masked by default; `--show` for debugging), `store remove`, `store rekey --new-identity /path/to/new.age`.
+
+Automation must pass `--non-interactive` and every required flag (`--profile`, `--name`, `--value` or `--value-file`). Later, export to SSM and flip `[sync] source` back to `ssm` when IAM is ready.
 
 ---
 

@@ -127,6 +127,21 @@ pub struct ServeCliOverrides {
     pub runtime_dir: Option<PathBuf>,
 }
 
+/// CLI-only overrides for `store` subcommands.
+#[derive(Debug, Default)]
+pub struct StoreCliOverrides {
+    pub identity: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
+    pub store_dir: Option<PathBuf>,
+}
+
+/// Resolved store settings after merge (file then CLI over defaults).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStore {
+    pub identity: PathBuf,
+    pub store_dir: PathBuf,
+}
+
 /// Path from `--config`, then `HOST_ENV_VAULT_CONFIG`, then [`DEFAULT_CONFIG_PATH`].
 pub fn resolve_config_path(cli_path: Option<PathBuf>) -> PathBuf {
     if let Some(path) = cli_path {
@@ -292,6 +307,30 @@ impl FileConfig {
             "state_dir",
         )?;
         Ok((identity, state_dir))
+    }
+
+    pub fn resolve_store(&self, cli: &StoreCliOverrides) -> Result<ResolvedStore, Error> {
+        let identity = pick_path(
+            cli.identity.as_ref(),
+            self.identity.as_ref(),
+            None,
+            "identity (set in config or pass --identity)",
+        )?;
+        let state_dir = pick_path(
+            cli.state_dir.as_ref(),
+            self.state_dir.as_ref(),
+            Some(DEFAULT_STATE_DIR),
+            "state_dir",
+        )?;
+        let store_dir = pick_store_dir(
+            cli.store_dir.as_ref(),
+            self.sync.store_dir.as_ref(),
+            &state_dir,
+        );
+        Ok(ResolvedStore {
+            identity,
+            store_dir,
+        })
     }
 
     pub fn resolve_serve(

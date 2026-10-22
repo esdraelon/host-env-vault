@@ -356,6 +356,8 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 
 **Acceptance.** Shellcheck if bash helpers; Rust tests for store round-trip; README “Transition deployment” section.
 
+- [x] **M20** `stack/m20-store-crud-cli` — `store` subcommand CRUD; `./scripts/gate.sh test` (270 tests); scoped mutants on `src/application/store/mod.rs` and `src/vault/host_store/mod.rs`.
+
 ## M21 — Store export (migration to SSM)
 
 **Problem.** Move from host store to SSM without manual parameter typing.
