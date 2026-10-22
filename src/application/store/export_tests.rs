@@ -6,6 +6,7 @@ use crate::application::store::{
     store_export_ssm, store_put, StoreExportOutput, StoreExportSsmOptions, StoreOptions,
 };
 use crate::ports::ssm_entry_parameter;
+use crate::vault::host_store::StoreBackend;
 use crate::vault::kek::AgeKek;
 
 fn temp_root(label: &str) -> std::path::PathBuf {
@@ -32,7 +33,7 @@ fn store_export_ssm_dry_run_prints_paths_and_sha256() {
     fs::create_dir_all(&root).unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    store_put(&opts, "app-web", "DB_PASS", "secret-value", &kek).unwrap();
+    store_put(&opts, "app-web", "DB_PASS", "secret-value", &kek, StoreBackend::Flat).unwrap();
     let prefix = "/host-env-vault";
     let out = store_export_ssm(
         &opts,
@@ -60,7 +61,7 @@ fn store_export_ssm_script_emits_put_parameter() {
     fs::create_dir_all(&root).unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    store_put(&opts, "app-web", "TOKEN", "tok", &kek).unwrap();
+    store_put(&opts, "app-web", "TOKEN", "tok", &kek, StoreBackend::Flat).unwrap();
     let out = store_export_ssm(
         &opts,
         &StoreExportSsmOptions {
@@ -86,7 +87,7 @@ fn store_export_ssm_json_manifest_uses_sha256_not_plaintext() {
     fs::create_dir_all(&root).unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    store_put(&opts, "app-worker", "K", "plain", &kek).unwrap();
+    store_put(&opts, "app-worker", "K", "plain", &kek, StoreBackend::Flat).unwrap();
     let out = store_export_ssm(
         &opts,
         &StoreExportSsmOptions {
@@ -111,8 +112,8 @@ fn store_export_ssm_honors_profile_filter() {
     fs::create_dir_all(&root).unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    store_put(&opts, "app-web", "A", "1", &kek).unwrap();
-    store_put(&opts, "app-worker", "B", "2", &kek).unwrap();
+    store_put(&opts, "app-web", "A", "1", &kek, StoreBackend::Flat).unwrap();
+    store_put(&opts, "app-worker", "B", "2", &kek, StoreBackend::Flat).unwrap();
     let out = store_export_ssm(
         &opts,
         &StoreExportSsmOptions {

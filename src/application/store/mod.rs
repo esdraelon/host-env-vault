@@ -10,7 +10,8 @@ use crate::catalog::{parse_catalog_text, ProfileDefinition};
 use crate::core::error::Error;
 use crate::ports::{LocalSecretSource, SecretSource};
 use crate::vault::host_store::{
-    ensure_store_dir, list_stored_profiles, read_profile_store, write_profile_store,
+    ensure_store_dir, list_stored_profiles, profile_path_for_backend, read_profile_store,
+    resolve_store_backend, write_profile_store_with_backend, StoreBackend,
 };
 use crate::vault::kek::AgeKek;
 
@@ -56,11 +57,18 @@ pub fn store_put(
     entry: &str,
     value: &str,
     kek: &AgeKek,
+    create_backend: StoreBackend,
 ) -> Result<(), Error> {
     validate_entry_names(profile, entry)?;
     let mut entries = read_profile_store(&options.store_dir, profile, kek).unwrap_or_default();
     entries.insert(entry.to_owned(), value.to_owned());
-    write_profile_store(&options.store_dir, profile, &entries, kek)?;
+    write_profile_store_with_backend(
+        &options.store_dir,
+        profile,
+        &entries,
+        kek,
+        create_backend,
+    )?;
     info!(
         target: "host_env_vault::store",
         profile = %profile,
@@ -80,9 +88,7 @@ pub fn store_get(
 ) -> Result<String, Error> {
     let entries = read_profile_store(&options.store_dir, profile, kek)?;
     let value = entries.get(entry).cloned().ok_or_else(|| {
-        Error::SsmMissing(format!(
-            "host-store:{profile}/{entry} (not in {profile}.secrets.age)"
-        ))
+        Error::SsmMissing(format!("host-store:{profile}/{entry} (not in profile store file)"))
     })?;
     Ok(if show_plaintext {
         value
@@ -111,14 +117,15 @@ pub fn store_remove(
     entry: &str,
     kek: &AgeKek,
 ) -> Result<(), Error> {
+    let backend = resolve_store_backend(&options.store_dir, profile)?;
     let mut entries = read_profile_store(&options.store_dir, profile, kek)?;
     if entries.remove(entry).is_none() {
         return Err(Error::SsmMissing(format!(
-            "host-store:{profile}/{entry} (not in {profile}.secrets.age)"
+            "host-store:{profile}/{entry} (not in profile store file)"
         )));
     }
     if entries.is_empty() {
-        let path = crate::vault::host_store::profile_store_path(&options.store_dir, profile);
+        let path = profile_path_for_backend(&options.store_dir, profile, backend);
         std::fs::remove_file(&path)?;
         info!(
             target: "host_env_vault::store",
@@ -126,7 +133,13 @@ pub fn store_remove(
             "store remove: profile file deleted"
         );
     } else {
-        write_profile_store(&options.store_dir, profile, &entries, kek)?;
+        write_profile_store_with_backend(
+            &options.store_dir,
+            profile,
+            &entries,
+            kek,
+            backend,
+        )?;
         info!(
             target: "host_env_vault::store",
             profile = %profile,
@@ -143,6 +156,7 @@ pub fn store_import_from_dev_dir(
     dev_dir: &Path,
     profile_filter: Option<&str>,
     kek: &AgeKek,
+    create_backend: StoreBackend,
 ) -> Result<usize, Error> {
     let source = LocalSecretSource::new(dev_dir);
     let catalog_text = source.load_catalog()?;
@@ -159,7 +173,13 @@ pub fn store_import_from_dev_dir(
         let Some(definition) = catalog.profile(name) else {
             continue;
         };
-        imported += import_profile_from_local_source(options, &source, definition, kek)?;
+        imported += import_profile_from_local_source(
+            options,
+            &source,
+            definition,
+            kek,
+            create_backend,
+        )?;
     }
     info!(
         target: "host_env_vault::store",
@@ -176,6 +196,7 @@ pub fn store_import_from_env_file(
     profile: &str,
     env_path: &Path,
     kek: &AgeKek,
+    create_backend: StoreBackend,
 ) -> Result<usize, Error> {
     validate_profile_name(profile)?;
     let root = env_path
@@ -209,7 +230,13 @@ pub fn store_import_from_env_file(
         imported += 1;
     }
     if imported > 0 {
-        write_profile_store(&options.store_dir, profile, &entries, kek)?;
+        write_profile_store_with_backend(
+            &options.store_dir,
+            profile,
+            &entries,
+            kek,
+            create_backend,
+        )?;
     }
     info!(
         target: "host_env_vault::store",
@@ -230,8 +257,15 @@ pub fn store_rekey(
     let profiles = list_stored_profiles(&options.store_dir)?;
     let mut count = 0usize;
     for profile in profiles {
+        let backend = resolve_store_backend(&options.store_dir, &profile)?;
         let entries = read_profile_store(&options.store_dir, &profile, old_kek)?;
-        write_profile_store(&options.store_dir, &profile, &entries, new_kek)?;
+        write_profile_store_with_backend(
+            &options.store_dir,
+            &profile,
+            &entries,
+            new_kek,
+            backend,
+        )?;
         count += 1;
     }
     info!(
@@ -247,6 +281,7 @@ fn import_profile_from_local_source(
     source: &LocalSecretSource,
     definition: &ProfileDefinition,
     kek: &AgeKek,
+    create_backend: StoreBackend,
 ) -> Result<usize, Error> {
     let profile = definition.name.as_str();
     let mut entry_names = Vec::new();
@@ -264,7 +299,13 @@ fn import_profile_from_local_source(
         imported += 1;
     }
     if imported > 0 {
-        write_profile_store(&options.store_dir, profile, &entries, kek)?;
+        write_profile_store_with_backend(
+            &options.store_dir,
+            profile,
+            &entries,
+            kek,
+            create_backend,
+        )?;
     }
     Ok(imported)
 }

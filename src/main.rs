@@ -12,7 +12,8 @@ use host_env_vault::ports::{S3Error, S3Port, SsmError};
 use host_env_vault::{
     resolve_field, resolve_secret_value, store_export_ssm, store_get, store_import_from_dev_dir,
     store_import_from_env_file, store_init, store_list, store_put, store_remove, store_rekey,
-    AgeKek, ProfileId, SlotTable, StoreExportOutput, StoreExportSsmOptions, StoreOptions,
+    AgeKek, ProfileId, SlotTable, StoreBackend, StoreExportOutput, StoreExportSsmOptions,
+    StoreOptions,
 };
 
 use adapters::aws_s3::AwsS3;
@@ -173,6 +174,9 @@ enum StoreCommand {
         value: Option<String>,
         #[arg(long)]
         value_file: Option<PathBuf>,
+        /// Backend for a new profile file (`flat` or `sqlite`; default flat).
+        #[arg(long, default_value = "flat")]
+        backend: String,
     },
     /// Read one entry (masked unless `--show`).
     Get {
@@ -207,6 +211,9 @@ enum StoreCommand {
         from_env_file: Option<PathBuf>,
         #[arg(long)]
         profile: Option<String>,
+        /// Backend for new profile files (`flat` or `sqlite`; default flat).
+        #[arg(long, default_value = "flat")]
+        backend: String,
     },
     /// Re-encrypt all profile store files with a new host age identity.
     Rekey {
@@ -618,12 +625,14 @@ fn run_store(
             name,
             value,
             value_file,
+            backend,
         } => {
             let profile = resolve_field("profile", profile, non_interactive)?;
             let name = resolve_field("entry name", name, non_interactive)?;
             let secret = resolve_secret_value(value, value_file, non_interactive)?;
             let kek = AgeKek::read_identity(&options.identity_path)?;
-            store_put(&options, &profile, &name, &secret, &kek)?;
+            let backend = StoreBackend::parse_cli(&backend)?;
+            store_put(&options, &profile, &name, &secret, &kek, backend)?;
             eprintln!("stored {profile}/{name}");
         }
         StoreCommand::Get {
@@ -665,17 +674,25 @@ fn run_store(
             from_dir,
             from_env_file,
             profile,
+            backend,
         } => {
             let kek = AgeKek::read_identity(&options.identity_path)?;
+            let backend = StoreBackend::parse_cli(&backend)?;
             match (from_dir, from_env_file) {
                 (Some(dir), None) => {
-                    let count =
-                        store_import_from_dev_dir(&options, &dir, profile.as_deref(), &kek)?;
+                    let count = store_import_from_dev_dir(
+                        &options,
+                        &dir,
+                        profile.as_deref(),
+                        &kek,
+                        backend,
+                    )?;
                     eprintln!("imported {count} entries from {}", dir.display());
                 }
                 (None, Some(path)) => {
                     let profile = resolve_field("profile", profile, non_interactive)?;
-                    let count = store_import_from_env_file(&options, &profile, &path, &kek)?;
+                    let count =
+                        store_import_from_env_file(&options, &profile, &path, &kek, backend)?;
                     eprintln!("imported {count} entries from {}", path.display());
                 }
                 (Some(_), Some(_)) => {

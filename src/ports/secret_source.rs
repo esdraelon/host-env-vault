@@ -159,8 +159,7 @@ impl SecretSource for HostStoreSecretSource<'_> {
         let entries = self.load_profile_entries(profile)?;
         entries.get(entry).cloned().ok_or_else(|| {
             Error::SsmMissing(format!(
-                "host-store:{profile}/{entry} (not in {}.secrets.age)",
-                profile
+                "host-store:{profile}/{entry} (not in profile store file)"
             ))
         })
     }

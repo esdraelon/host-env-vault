@@ -22,6 +22,7 @@ aws-config = { version = "1.5.10", features = ["behavior-version-latest"] }
 aws-sdk-ssm = "1.61.0"
 aws-sdk-s3 = "1.68.0"
 tokio = { version = "1.41", features = ["rt-multi-thread"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 
 [dev-dependencies]
 serial_test = "3.2.0"

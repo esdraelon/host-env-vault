@@ -6,7 +6,9 @@ use crate::application::store::{
 };
 use crate::core::error::Error;
 use crate::ports::LOCAL_CATALOG_FILE;
-use crate::vault::host_store::{profile_store_path, read_profile_store};
+use crate::vault::host_store::{
+    profile_store_path, read_profile_store, sqlite_store_path, StoreBackend,
+};
 use crate::vault::kek::AgeKek;
 
 fn temp_root(label: &str) -> std::path::PathBuf {
@@ -34,7 +36,7 @@ fn store_put_get_list_remove_round_trip() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     store_init(&opts).unwrap();
-    store_put(&opts, "app-web", "DB_PASS", "secret", &kek).unwrap();
+    store_put(&opts, "app-web", "DB_PASS", "secret", &kek, StoreBackend::Flat).unwrap();
     assert_eq!(
         store_get(&opts, "app-web", "DB_PASS", &kek, true).unwrap(),
         "secret"
@@ -66,7 +68,7 @@ fn store_import_from_dev_dir_uses_catalog_entries() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     store_init(&opts).unwrap();
-    let count = store_import_from_dev_dir(&opts, &dev, None, &kek).unwrap();
+    let count = store_import_from_dev_dir(&opts, &dev, None, &kek, StoreBackend::Flat).unwrap();
     assert_eq!(count, 1);
     assert_eq!(
         read_profile_store(&opts.store_dir, "app-web", &kek).unwrap()["DB_PASS"],
@@ -91,7 +93,7 @@ fn store_import_from_env_file_reads_at_paths() {
     let kek = AgeKek::generate();
     store_init(&opts).unwrap();
     let count =
-        store_import_from_env_file(&opts, "app-web", &root.join("app-web.env"), &kek).unwrap();
+        store_import_from_env_file(&opts, "app-web", &root.join("app-web.env"), &kek, StoreBackend::Flat).unwrap();
     assert_eq!(count, 1);
     assert_eq!(
         read_profile_store(&opts.store_dir, "app-web", &kek).unwrap()["API_TOKEN"],
@@ -108,7 +110,7 @@ fn store_rekey_reseals_all_profiles() {
     let opts = options(&root);
     let old = AgeKek::generate();
     let new = AgeKek::generate();
-    store_put(&opts, "app-web", "K", "v", &old).unwrap();
+    store_put(&opts, "app-web", "K", "v", &old, StoreBackend::Flat).unwrap();
     let before = fs::read(profile_store_path(&opts.store_dir, "app-web")).unwrap();
     store_rekey(&opts, &old, &new).unwrap();
     let after = fs::read(profile_store_path(&opts.store_dir, "app-web")).unwrap();
@@ -143,7 +145,7 @@ fn store_import_from_dev_dir_honors_profile_filter() {
     fs::write(dev.join("app-worker.env"), "B=2\n").unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    let count = store_import_from_dev_dir(&opts, &dev, Some("app-web"), &kek).unwrap();
+    let count = store_import_from_dev_dir(&opts, &dev, Some("app-web"), &kek, StoreBackend::Flat).unwrap();
     assert_eq!(count, 1);
     assert!(read_profile_store(&opts.store_dir, "app-web", &kek).is_ok());
     assert!(read_profile_store(&opts.store_dir, "app-worker", &kek).is_err());
@@ -159,7 +161,7 @@ fn store_import_from_env_file_missing_path_errors() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     assert!(matches!(
-        store_import_from_env_file(&opts, "app-web", &root.join("missing.env"), &kek),
+        store_import_from_env_file(&opts, "app-web", &root.join("missing.env"), &kek, StoreBackend::Flat),
         Err(Error::SsmMissing(_))
     ));
     let _ = fs::remove_dir_all(&root);
@@ -174,7 +176,7 @@ fn store_import_from_env_file_skips_when_no_entries() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     let count =
-        store_import_from_env_file(&opts, "app-web", &root.join("app-web.env"), &kek).unwrap();
+        store_import_from_env_file(&opts, "app-web", &root.join("app-web.env"), &kek, StoreBackend::Flat).unwrap();
     assert_eq!(count, 0);
     assert!(!profile_store_path(&opts.store_dir, "app-web").is_file());
     let _ = fs::remove_dir_all(&root);
@@ -188,8 +190,8 @@ fn store_rekey_counts_every_profile_file() {
     let opts = options(&root);
     let old = AgeKek::generate();
     let new = AgeKek::generate();
-    store_put(&opts, "app-web", "K", "v", &old).unwrap();
-    store_put(&opts, "app-worker", "K", "v", &old).unwrap();
+    store_put(&opts, "app-web", "K", "v", &old, StoreBackend::Flat).unwrap();
+    store_put(&opts, "app-worker", "K", "v", &old, StoreBackend::Flat).unwrap();
     assert_eq!(store_rekey(&opts, &old, &new).unwrap(), 2);
     let _ = fs::remove_dir_all(&root);
 }
@@ -202,13 +204,37 @@ fn store_put_rejects_invalid_profile_or_entry_names() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     assert!(matches!(
-        store_put(&opts, "../bad", "DB_PASS", "x", &kek),
+        store_put(&opts, "../bad", "DB_PASS", "x", &kek, StoreBackend::Flat),
         Err(Error::CatalogParse(_))
     ));
     assert!(matches!(
-        store_put(&opts, "app-web", "../bad", "x", &kek),
+        store_put(&opts, "app-web", "../bad", "x", &kek, StoreBackend::Flat),
         Err(Error::CatalogParse(_))
     ));
     let _ = fs::remove_dir_all(&root);
 }
 
+#[test]
+fn store_put_sqlite_backend_round_trip() {
+    let root = temp_root("sqlite-crud");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let opts = options(&root);
+    let kek = AgeKek::generate();
+    store_put(
+        &opts,
+        "app-worker",
+        "TOKEN",
+        "sqlite-secret",
+        &kek,
+        StoreBackend::Sqlite,
+    )
+    .unwrap();
+    assert!(sqlite_store_path(&opts.store_dir, "app-worker").is_file());
+    assert!(!profile_store_path(&opts.store_dir, "app-worker").is_file());
+    assert_eq!(
+        store_get(&opts, "app-worker", "TOKEN", &kek, true).unwrap(),
+        "sqlite-secret"
+    );
+    let _ = fs::remove_dir_all(&root);
+}

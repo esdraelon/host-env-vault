@@ -7,6 +7,7 @@ use crate::application::store::{
 };
 use crate::ports::LOCAL_CATALOG_FILE;
 use crate::testing::log_test_capture::capture_info_logs;
+use crate::vault::host_store::StoreBackend;
 use crate::vault::kek::AgeKek;
 
 fn temp_root(label: &str) -> std::path::PathBuf {
@@ -52,7 +53,7 @@ fn log_store_put_upserted() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
-        store_put(&opts, "app-web", "DB_PASS", "x", &kek).unwrap();
+        store_put(&opts, "app-web", "DB_PASS", "x", &kek, StoreBackend::Flat).unwrap();
     });
     assert!(
         text.contains("store put: entry upserted"),
@@ -76,7 +77,7 @@ fn log_store_import_dev_layout() {
     let opts = options(&root);
     let kek = AgeKek::generate();
     let text = capture_info_logs(|| {
-        store_import_from_dev_dir(&opts, &dev, None, &kek).unwrap();
+        store_import_from_dev_dir(&opts, &dev, None, &kek, StoreBackend::Flat).unwrap();
     });
     assert!(
         text.contains("store import: dev layout complete"),
@@ -95,7 +96,7 @@ fn log_store_rekey_rotated() {
     let opts = options(&root);
     let old = AgeKek::generate();
     let new = AgeKek::generate();
-    store_put(&opts, "app-web", "K", "v", &old).unwrap();
+    store_put(&opts, "app-web", "K", "v", &old, StoreBackend::Flat).unwrap();
     let text = capture_info_logs(|| {
         store_rekey(&opts, &old, &new).unwrap();
     });
@@ -114,7 +115,7 @@ fn log_store_export_ssm_dry_run() {
     fs::create_dir_all(&root).unwrap();
     let opts = options(&root);
     let kek = AgeKek::generate();
-    store_put(&opts, "app-web", "K", "v", &kek).unwrap();
+    store_put(&opts, "app-web", "K", "v", &kek, StoreBackend::Flat).unwrap();
     let text = capture_info_logs(|| {
         store_export_ssm(
             &opts,

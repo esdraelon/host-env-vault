@@ -395,6 +395,16 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 
 **Acceptance.** Both backends in tests; one profile flat + one profile sqlite in fixture catalog.
 
+- [x] **M22** `stack/m22-store-sqlite-dual-engine` — dual host store engines (`.secrets.age` / `.secrets.db`); extension-only dispatch.
+
+### M22 completion
+
+- **Branch:** `stack/m22-store-sqlite-dual-engine`
+- **What changed:** [`StoreBackend`](src/vault/host_store/mod.rs) resolves engine from `{profile}.secrets.age` vs `{profile}.secrets.db` only (ambiguous pair → hard fail); flat engine in [`flat.rs`](src/vault/host_store/flat.rs), age-sealed SQLite in [`sqlite.rs`](src/vault/host_store/sqlite.rs); [`HostStoreSecretSource`](src/ports/secret_source.rs) and [`store`](src/application/store/mod.rs) CRUD/rekey dispatch per profile; `store put` / `store import --backend flat|sqlite` for new profile files (default flat).
+- **Log-tested branches:** unchanged M20 store logs (no new decision branches).
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m22-store-sqlite-dual-engine`)
+- **Gate:** `./scripts/gate.sh test` — **282** passed; `./scripts/gate.sh mutants -- --file src/vault/host_store/mod.rs` — **17/19** viable caught (**2** missed, **2** unviable); follow-up: scoped mutants on `flat.rs` / `sqlite.rs` / `store/mod.rs`.
+
 ## M23 — README and agent skill (operator + migration UX)
 
 **Problem.** Documentation and agent guidance lag features; migration from legacy compose plaintext must be **designable** by an agent even if one-shot conversion scripts stay out of repo.

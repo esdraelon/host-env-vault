@@ -46,6 +46,7 @@ pub use application::store::{
     store_remove, store_rekey, StoreExportFormat, StoreExportOutput, StoreExportParameter,
     StoreExportSsmOptions, StoreOptions, StoreProfileListing,
 };
+pub use vault::host_store::StoreBackend;
 pub use application::sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter,
     sync_catalog_from_text, sync_from_host_store, sync_from_local, sync_from_ports,
