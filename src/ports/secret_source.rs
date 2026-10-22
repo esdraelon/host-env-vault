@@ -2,10 +2,14 @@
 //! Production sync uses [`SsmSecretSource`] over [`SsmPort`](super::ssm::SsmPort);
 //! [`LocalSecretSource`] reads `catalog.json` and per-profile env files for laptop dev.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::core::error::Error;
 use crate::ports::ssm::{SsmError, SsmPort};
+use crate::vault::host_store::read_profile_store;
+use crate::vault::kek::AgeKek;
 
 /// Snapshot file at the root of a local secrets directory.
 pub const LOCAL_CATALOG_FILE: &str = "catalog.json";
@@ -106,6 +110,58 @@ impl SecretSource for LocalSecretSource {
 
     fn load_entry(&self, profile: &str, entry: &str) -> Result<String, Error> {
         load_local_entry(&self.root, profile, entry)
+    }
+}
+
+/// Catalog from SSM or local `catalog.json`; secret **entries** from encrypted host store files.
+pub struct HostStoreSecretSource<'a> {
+    catalog: &'a dyn SecretSource,
+    store_dir: PathBuf,
+    kek: &'a AgeKek,
+    cache: RefCell<HashMap<String, HashMap<String, String>>>,
+}
+
+impl<'a> HostStoreSecretSource<'a> {
+    pub fn new(
+        catalog: &'a dyn SecretSource,
+        store_dir: impl Into<PathBuf>,
+        kek: &'a AgeKek,
+    ) -> Self {
+        Self {
+            catalog,
+            store_dir: store_dir.into(),
+            kek,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    pub fn store_dir(&self) -> &Path {
+        &self.store_dir
+    }
+
+    fn load_profile_entries(&self, profile: &str) -> Result<HashMap<String, String>, Error> {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(entries) = cache.get(profile) {
+            return Ok(entries.clone());
+        }
+        let entries = read_profile_store(&self.store_dir, profile, self.kek)?;
+        cache.insert(profile.to_owned(), entries.clone());
+        Ok(entries)
+    }
+}
+
+impl SecretSource for HostStoreSecretSource<'_> {
+    fn load_catalog(&self) -> Result<String, Error> {
+        self.catalog.load_catalog()
+    }
+
+    fn load_entry(&self, profile: &str, entry: &str) -> Result<String, Error> {
+        let entries = self.load_profile_entries(profile)?;
+        entries.get(entry).cloned().ok_or_else(|| {
+            Error::SsmMissing(format!(
+                "host-store:{profile}/{entry} (not in profile store file)"
+            ))
+        })
     }
 }
 
@@ -328,6 +384,36 @@ mod tests {
             Err(Error::SsmMissing(name)) if name.contains("MISSING")
         ));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn host_store_secret_source_loads_catalog_and_store_entries() {
+        use crate::vault::host_store::write_profile_store;
+        use crate::vault::kek::AgeKek;
+        use std::collections::HashMap;
+
+        let catalog_root = temp_local_root("host-catalog");
+        let store_root = temp_local_root("host-store");
+        let _ = fs::remove_dir_all(&catalog_root);
+        let _ = fs::remove_dir_all(&store_root);
+        fs::create_dir_all(&catalog_root).unwrap();
+        fs::create_dir_all(&store_root).unwrap();
+        const CATALOG: &str =
+            r#"{"profiles":[{"name":"app-web","inject":["DB_PASS"],"runtime":[]}]}"#;
+        fs::write(catalog_root.join(LOCAL_CATALOG_FILE), CATALOG).unwrap();
+        let kek = AgeKek::generate();
+        let mut entries = HashMap::new();
+        entries.insert("DB_PASS".into(), "from-store".into());
+        write_profile_store(&store_root, "app-web", &entries, &kek).unwrap();
+        let catalog = LocalSecretSource::new(&catalog_root);
+        let source = HostStoreSecretSource::new(&catalog, &store_root, &kek);
+        assert_eq!(source.load_catalog().unwrap(), CATALOG);
+        assert_eq!(
+            source.load_entry("app-web", "DB_PASS").unwrap(),
+            "from-store"
+        );
+        let _ = fs::remove_dir_all(&catalog_root);
+        let _ = fs::remove_dir_all(&store_root);
     }
 
     #[test]

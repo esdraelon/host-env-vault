@@ -16,11 +16,13 @@ zeroize = { version = "1.9.1", features = ["derive"] }
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10.9"
 toml = "0.8"
 aws-config = { version = "1.5.10", features = ["behavior-version-latest"] }
 aws-sdk-ssm = "1.61.0"
 aws-sdk-s3 = "1.68.0"
 tokio = { version = "1.41", features = ["rt-multi-thread"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 
 [dev-dependencies]
 serial_test = "3.2.0"

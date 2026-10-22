@@ -285,12 +285,163 @@ Delivered in README section **Using secrets in your app** (Python, PHP, TypeScri
 
 No separate SDK crate until protocol stabilizes; copy-paste helpers are enough for v1.
 
+## M17 — Validate (sync dry-run)
+
+**Problem.** Operators need to prove catalog + SSM/local entries are reachable **without** sealing `.hev` or minting keys.
+
+**Design.** Subcommand `host-env-vault validate`: same config as `sync`, read-only `SecretSource` fetch, optional S3 document probes, exit non-zero on any profile failure.
+
+**Acceptance.** `./scripts/gate.sh test`; README + [`docs/validate.md`](validate.md).
+
+- [x] **M17** `stack/m17-sync-validate` — merged in PR #6.
+
+## M18 — `{profile}.env-host-vault` preflight
+
+**Problem.** App expectations and host catalog can drift; sync should not overwrite good bundles on mismatch.
+
+**Design.**
+
+- Required per-profile manifest `{profile}.env-host-vault` (TOML): inject/runtime env and file **names** only.
+- Discovery: `{manifests_dir}/{profile}.env-host-vault` (default `{state_dir}/manifests`); local dev also `{local_secrets_dir}/{profile}.env-host-vault`.
+- **Strict set equality** with catalog allowlists. Missing manifest or mismatch → hard fail on `validate`; on `sync` keep existing `.hev`, write `{profile}.stale`, return `SyncFailed`.
+- **`render`** injects synthetic `ENV_HOST_VAULT_STALE=true|false` into `secrets.env` (not a catalog secret).
+
+**Acceptance.** Shared `application/manifest/`; examples under `docs/examples/dev-shared/manifests/`; bootstrap copies into gitignored `dev-shared/`.
+
+- [x] **M18** `stack/m18-env-host-vault-preflight` — merged in PR #6.
+
+## M19 — Per-profile encrypted host store (transition prod)
+
+**Problem.** SSM/IAM is not ready on day one; plaintext in containers is unacceptable. Need a **host-managed**, encrypted upstream store that feeds the same seal → `.hev` → render/serve pipeline.
+
+**Design.**
+
+- Extend [`SecretSource`](../src/ports/secret_source.rs) with a **host store** backend: **one encrypted file per profile** under a configured store root (`{store_dir}/{profile}.secrets.age`; SQLite `.secrets.db` in M22).
+- Encryption: **same age identity / KEK as `.hev` bundles** (one host key; no separate store key).
+- `sync --source host-store` (name TBD in config `[sync] source = "host-store"`) reads catalog from existing path (SSM param, local `catalog.json`, or embedded catalog pointer in config) and **entries only** from encrypted profile files.
+- **`validate`** uses the same source. Manifest preflight (M18) unchanged.
+- Permissions: root-only store dir; loud log line that transition mode is active.
+
+**Non-goals.** No operator `vim` on cleartext; no SQLite yet (M22).
+
+**Acceptance.** Behavior tests with temp store files; gate; config TOML fields for `store_dir`.
+
+- [x] **M19** `stack/m19-host-store-per-profile`
+
+### M19 completion
+
+- **Branch:** `stack/m19-host-store-per-profile`
+- **What changed:** `[sync] source = "host-store"` / `--source host-store`; `store_dir` (default `{state_dir}/store`); per-profile `{profile}.secrets.age` sealed with host age KEK; `HostStoreSecretSource` (catalog from SSM or local `catalog.json`, entries from store); `sync` and `validate` wired; transition-mode info logs.
+- **Log-tested branches:** `sync transition mode: host encrypted store active`; `validate transition mode: host encrypted store active`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m19-host-store-per-profile`)
+- **Gate:** `./scripts/gate.sh test` — 253 passed; `./scripts/gate.sh mutants` on touched modules — 154 mutants, 111 caught, 0 missed, 43 unviable.
+
+## M20 — Store CRUD and CLI UX
+
+**Problem.** Transition mode must be operable without decrypt-and-edit.
+
+**Design.** Subcommand group `host-env-vault store` (or `secrets store`):
+
+| Command | Role |
+| --- | --- |
+| `init` | Create store layout + keys |
+| `put` / `set` | Upsert one entry for a profile (env or file payload) |
+| `get` | Read back (for debugging; optional mask) |
+| `list` | Profiles and entry names in store |
+| `remove` | Delete entry |
+| `import` | From dev layout (`catalog.json`, `{profile}.env`, `files/`) or single compose env file |
+| `rekey` | Rotate store encryption |
+
+**CLI UX:** interactive prompts when stdin is a TTY (profile, entry name, hidden value); `--non-interactive` flags for automation. **No** workflow that opens `$EDITOR` on decrypted secrets.
+
+**Acceptance.** Shellcheck if bash helpers; Rust tests for store round-trip; README “Transition deployment” section.
+
+- [x] **M20** `stack/m20-store-crud-cli` — `store` subcommand CRUD; `./scripts/gate.sh test` (270 tests); scoped mutants on `src/application/store/mod.rs` and `src/vault/host_store/mod.rs`.
+
+## M21 — Store export (migration to SSM)
+
+**Problem.** Move from host store to SSM without manual parameter typing.
+
+**Design.**
+
+- `host-env-vault store export --format ssm` (or `export ssm`): emit `aws ssm put-parameter` script or JSON manifest of `{prefix}/{profile}/{entry}` → value references.
+- Optional `--dry-run`: print paths and SHA256 only.
+- Document flip: fill SSM → `validate --source ssm` → change `[sync] source` → remove or archive host store files.
+
+**Acceptance.** Integration test with mock paths; docs in [`docs/validate.md`](validate.md) or new `docs/transition.md`.
+
+- [x] **M21** `stack/m21-store-export-ssm` — `store export --format ssm`, `--dry-run`, transition docs, export tests.
+
+### M21 completion
+
+- **Branch:** `stack/m21-store-export-ssm`
+- **What changed:** `store export --format ssm` emits a put-parameter bash script or `--json` SHA256 manifest; `--dry-run` prints `{prefix}/{profile}/{entry}` paths and hashes only; `[sync] secrets_prefix` merged into store resolve; [`docs/transition.md`](transition.md) cutover checklist; link from [`docs/validate.md`](validate.md).
+- **Log-tested branches:** `store export: ssm dry-run`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m21-store-export-ssm`)
+- **Gate:** `./scripts/gate.sh test` — **276** passed; `./scripts/gate.sh mutants -- --file src/application/store/export.rs` — **13/13 caught**; `./scripts/gate.sh mutants -- --file src/config/mod.rs` — **12/12 viable caught** (5 unviable).
+
+## M22 — SQLite alternative backend (dual engines)
+
+**Problem.** Per-profile flat files are simple but awkward for frequent partial rotation; offer **both** backends.
+
+**Design.**
+
+- **Engine selection is contextual from file extension only** — no catalog field or sidecar meta. At sync time, for each profile, resolve `{store_dir}/{profile}.*` (or a documented naming convention: e.g. `{profile}.secrets.age` vs `{profile}.secrets.db`). Extension picks the engine:
+  - Flat encrypted blob (e.g. `.secrets.age`) → M19 engine.
+  - SQLite (e.g. `.secrets.db`) → age-encrypted DB file (same host KEK); schema: entries keyed by `(profile, name, kind)`.
+- Ambiguous or missing store file → hard fail (same as missing manifest).
+- `SecretSource` facade: open the matching engine per profile from extension; `store put` creates/updates using the extension the operator chose when creating that profile’s store file.
+- `store` CRUD (M20) dispatches to the correct engine when writing.
+
+**Acceptance.** Both backends in tests; one profile flat + one profile sqlite in fixture catalog.
+
+- [x] **M22** `stack/m22-store-sqlite-dual-engine` — dual host store engines (`.secrets.age` / `.secrets.db`); extension-only dispatch.
+
+### M22 completion
+
+- **Branch:** `stack/m22-store-sqlite-dual-engine`
+- **What changed:** [`StoreBackend`](src/vault/host_store/mod.rs) resolves engine from `{profile}.secrets.age` vs `{profile}.secrets.db` only (ambiguous pair → hard fail); flat engine in [`flat.rs`](src/vault/host_store/flat.rs), age-sealed SQLite in [`sqlite.rs`](src/vault/host_store/sqlite.rs); [`HostStoreSecretSource`](src/ports/secret_source.rs) and [`store`](src/application/store/mod.rs) CRUD/rekey dispatch per profile; `store put` / `store import --backend flat|sqlite` for new profile files (default flat).
+- **Log-tested branches:** unchanged M20 store logs (no new decision branches).
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m22-store-sqlite-dual-engine`)
+- **Gate:** `./scripts/gate.sh test` — **288** passed; scoped `cargo mutants` on `host_store/{mod,flat,sqlite}.rs`, `application/store/mod.rs`, `ports/secret_source.rs` — **114/117 caught (97.4%)** on viable mutants (125 total, 8 unviable).
+
+## M23 — README and agent skill (operator + migration UX)
+
+**Problem.** Documentation and agent guidance lag features; migration from legacy compose plaintext must be **designable** by an agent even if one-shot conversion scripts stay out of repo.
+
+**Design.**
+
+- README: security **posture ladder** (container plaintext → host encrypted store → SSM → runtime socket); transition mode warnings; full CLI reference for `validate`, `sync`, `store`, manifests.
+- Project skill [`.cursor/skills/host-env-vault/SKILL.md`](../.cursor/skills/host-env-vault/SKILL.md): when to use validate vs sync; manifest rules; store backends; **migration UX north star** (below).
+- Optional: link skill from [`docs/compositional-catalog.md`](compositional-catalog.md).
+
+### Migration UX north star (feature design; conversion script out of repo)
+
+An agent inspecting a deployed application should be able to:
+
+1. **Assess posture** — find compose/env files, injected vs runtime secrets, profile name guess, missing `{profile}.env-host-vault`.
+2. **Plan** — map plaintext keys to catalog inject/runtime lists; choose store backend + extension for new profile.
+3. **Emit a script** (generated locally, not shipped) that only calls **`host-env-vault` CLI**: `store init`, `store import` / `put`, write manifest TOML, `validate`, `sync`, `render` smoke paths.
+4. **Hand off** — operator runs script; later M21 `store export` + SSM when ready.
+
+The repo documents **inputs** (app directory layout conventions), **CLI command graph**, and **manifest/catalog shapes** so agents do not invent decrypt-and-vim flows.
+
+**Acceptance.** Skill frontmatter + checklist; README table of subcommands; no product-specific app names in skill.
+
+- [x] **M23** `stack/m23-readme-agent-skill` — README posture ladder and CLI reference; agent skill; compositional-catalog link.
+
+### M23 completion
+
+- **Branch:** `stack/m23-readme-agent-skill`
+- **What changed:** README security posture ladder, transition warnings, subcommand table (`validate` / `sync` / `store` / manifests), dual store extensions, transition doc links; [`.cursor/skills/host-env-vault/SKILL.md`](../.cursor/skills/host-env-vault/SKILL.md) validate-vs-sync graph, store subcommands, migration north star; [compositional-catalog.md](compositional-catalog.md) manifest + skill link; [transition.md](transition.md) archive note for `.secrets.db`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m23-readme-agent-skill`)
+- **Gate:** docs only — no `./scripts/gate.sh test`; `test ! -d /tmp/hev-target`.
+
 ## Open questions
 
 - Should local dev support **only** `.env` per profile, or also a single merged `.env` with prefixed keys (`APP_WEB__DB_PASS`)?
 - Customer-managed KMS for SSM: document only, or first-class catalog field?
 - Multi-host identity: recovery when `kek.age` is lost (always re-seal from source; document backup policy for identity separately from bundles).
-
 ## Suggested branch order
 
 ```text
@@ -301,6 +452,13 @@ stack/m13-neutral-fixtures
 stack/m14-systemd-templates
 stack/m15-systemd-installer
 stack/m16-profile-wizard
+stack/m17-sync-validate
+stack/m18-env-host-vault-preflight
+stack/m19-host-store-per-profile
+stack/m20-store-crud-cli
+stack/m21-store-export-ssm
+stack/m22-store-sqlite-dual-engine
+stack/m23-readme-agent-skill
 ```
 
 Each Rust milestone: implement → `scripts/gate.sh` → mutation on touched files only → cleanup (automatic). M14–M16 are mostly `packaging/` and `scripts/`; gate is shellcheck, template verify, and documented manual QA (no mutation gate on shell).

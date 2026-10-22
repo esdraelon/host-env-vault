@@ -38,7 +38,9 @@ Create a **gitignored** `dev-shared/` beside the repo (see [docs/examples/dev-sh
 
 ## Validate before sync
 
-After merging fragments (or editing SSM), run [`host-env-vault validate`](validate.md) to confirm every catalog entry resolves in Parameter Store or local dev files **without** sealing bundles. Optional `--manifest` cross-checks a per-app `.host-env-vault.toml` against the catalog allowlist.
+After merging fragments (or editing SSM), run [`host-env-vault validate`](validate.md) to confirm every catalog entry resolves in Parameter Store or local dev files **without** sealing bundles. Each profile also needs **`{profile}.env-host-vault`** (TOML name lists that exactly match the catalog); see [validate.md](validate.md). Optional `--manifest` with `--profile` overrides discovery for one profile in CI.
+
+**Agents:** migration checklists and CLI-only script shapes live in [`.cursor/skills/host-env-vault/SKILL.md`](../.cursor/skills/host-env-vault/SKILL.md).
 
 ## Future
 

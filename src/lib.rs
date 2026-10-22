@@ -40,17 +40,26 @@ pub use application::render::{
 pub use application::serve::{
     bind_serve_socket, fetch_runtime_entry, serve_profile_forever, ServeOptions, SERVE_SLOT_INDEX,
 };
+pub use application::store::{
+    mask_secret, resolve_field, resolve_secret_value, store_export_ssm, store_get,
+    store_import_from_dev_dir, store_import_from_env_file, store_init, store_list, store_put,
+    store_remove, store_rekey, StoreExportFormat, StoreExportOutput, StoreExportParameter,
+    StoreExportSsmOptions, StoreOptions, StoreProfileListing,
+};
+pub use vault::host_store::StoreBackend;
 pub use application::sync::{
     bundle_path, load_or_create_identity, ssm_entry_parameter,
-    sync_catalog_from_text, sync_from_local, sync_from_ports, sync_from_secret_source,
-    sync_from_ssm, SyncOptions, DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
+    sync_catalog_from_text, sync_from_host_store, sync_from_local, sync_from_ports,
+    sync_from_secret_source, sync_from_ssm, SyncOptions, DEFAULT_STATE_DIR, SYNC_SLOT_INDEX,
 };
 pub use application::validate::{
-    validate_from_local, validate_from_secret_source, validate_from_ssm, ValidateOptions,
+    validate_from_host_store, validate_from_local, validate_from_secret_source, validate_from_ssm,
+    ValidateOptions,
 };
 pub use config::{
     load_config, parse_config_text, parse_sync_source, resolve_config_path, FileConfig,
-    RenderCliOverrides, ResolvedSync, ResolvedValidate, ServeCliOverrides, SyncCliOverrides,
+    RenderCliOverrides, ResolvedStore, ResolvedSync, ResolvedValidate, ServeCliOverrides,
+    StoreCliOverrides, SyncCliOverrides,
     SyncSourceKind, ValidateCliOverrides,
     CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH, DEFAULT_RUNTIME_DIR,
 };
@@ -66,8 +75,11 @@ pub use core::slot::SlotTable;
 pub use legacy::profile::{Kind, ProfileId};
 pub use legacy::render::{read_staging, render, RenderMode};
 pub use ports::{
-    GhError, GhPort, LocalSecretSource, MemoryGh, MemoryS3, MemorySsm, S3Port, SecretSource,
-    SsmPort, SsmSecretSource, LOCAL_CATALOG_FILE,
+    GhError, GhPort, HostStoreSecretSource, LocalSecretSource, MemoryGh, MemoryS3, MemorySsm,
+    S3Port, SecretSource, SsmPort, SsmSecretSource, LOCAL_CATALOG_FILE,
+};
+pub use vault::host_store::{
+    profile_store_path, read_profile_store, write_profile_store, PROFILE_SECRETS_SUFFIX,
 };
 pub use vault::bundle::{open, open_bytes, seal, seal_bytes, Entry, Opened};
 pub use vault::kek::AgeKek;

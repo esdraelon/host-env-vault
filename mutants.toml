@@ -1,2 +1,2 @@
 # Production CLI adapters (AWS SDK, real `gh`) are not mutation-tested; the library is.
-exclude_globs = ["src/main.rs"]
+exclude_globs = ["src/main.rs", "src/application/store/interactive.rs"]

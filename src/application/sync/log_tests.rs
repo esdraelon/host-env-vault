@@ -2,7 +2,9 @@ use serial_test::serial;
 use std::path::PathBuf;
 
 use crate::application::manifest::{default_manifests_dir, write_manifest_for_profile};
-use crate::application::sync::{load_or_create_identity, sync_from_ssm, SyncOptions};
+use crate::application::sync::{load_or_create_identity, sync_from_host_store, sync_from_ssm, SyncOptions};
+use crate::ports::LocalSecretSource;
+use crate::vault::host_store::write_profile_store;
 use crate::catalog::{parse_catalog_text, DEFAULT_CATALOG_PARAMETER, DEFAULT_SECRETS_PREFIX};
 use crate::config::SyncSourceKind;
 use crate::core::slot::{SlotTable, SECRET_MAX_BYTES};
@@ -137,6 +139,53 @@ fn log_sync_reject_oversize_parameter() {
     });
     assert!(
         text.contains("sync reject oversize parameter"),
+        "logs: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+#[serial]
+#[test]
+fn log_sync_host_store_transition_mode() {
+    use std::collections::HashMap;
+
+    let state_dir = temp_dir("host-store-log");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).unwrap();
+    write_manifest_for_profile(
+        &default_manifests_dir(&state_dir),
+        parse_catalog_text(WEB).unwrap().profile("app-web").unwrap(),
+    )
+    .unwrap();
+    let catalog_dir = state_dir.join("catalog");
+    std::fs::create_dir_all(&catalog_dir).unwrap();
+    std::fs::write(
+        catalog_dir.join(crate::ports::LOCAL_CATALOG_FILE),
+        WEB,
+    )
+    .unwrap();
+    let store_dir = state_dir.join("store");
+    let kek = AgeKek::generate();
+    let mut entries = HashMap::new();
+    entries.insert("DB_PASS".into(), "secret".into());
+    write_profile_store(&store_dir, "app-web", &entries, &kek).unwrap();
+    let catalog = LocalSecretSource::new(&catalog_dir);
+    let text = capture_info_logs(|| {
+        let mut table = SlotTable::new();
+        let options = SyncOptions {
+            identity_path: state_dir.join("kek.age"),
+            state_dir: state_dir.clone(),
+            catalog_param: DEFAULT_CATALOG_PARAMETER.to_owned(),
+            secrets_prefix: DEFAULT_SECRETS_PREFIX.to_owned(),
+            source: SyncSourceKind::HostStore,
+            local_secrets_dir: Some(catalog_dir),
+            manifests_dir: None,
+            s3_prefix: None,
+        };
+        sync_from_host_store(&catalog, &store_dir, &kek, None, &mut table, &options).unwrap();
+    });
+    assert!(
+        text.contains("sync transition mode: host encrypted store active"),
         "logs: {text}"
     );
     let _ = std::fs::remove_dir_all(&state_dir);

@@ -5,11 +5,16 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use host_env_vault::config::{
-    load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, SyncCliOverrides,
-    SyncSourceKind, ValidateCliOverrides,
+    load_config, resolve_config_path, RenderCliOverrides, ServeCliOverrides, StoreCliOverrides,
+    SyncCliOverrides, SyncSourceKind, ValidateCliOverrides,
 };
 use host_env_vault::ports::{S3Error, S3Port, SsmError};
-use host_env_vault::{AgeKek, ProfileId, SlotTable};
+use host_env_vault::{
+    resolve_field, resolve_secret_value, store_export_ssm, store_get, store_import_from_dev_dir,
+    store_import_from_env_file, store_init, store_list, store_put, store_remove, store_rekey,
+    AgeKek, ProfileId, SlotTable, StoreBackend, StoreExportOutput, StoreExportSsmOptions,
+    StoreOptions,
+};
 
 use adapters::aws_s3::AwsS3;
 use adapters::aws_ssm::AwsSsm;
@@ -62,8 +67,12 @@ enum Command {
     },
     /// Read-only dry-run: load catalog and secret entries without sealing bundles.
     Validate {
+        #[arg(long)]
+        identity: Option<PathBuf>,
         #[arg(long, value_enum)]
         source: Option<SyncSource>,
+        #[arg(long)]
+        store_dir: Option<PathBuf>,
         #[arg(long)]
         catalog_param: Option<String>,
         #[arg(long)]
@@ -98,6 +107,8 @@ enum Command {
         #[arg(long)]
         local_secrets_dir: Option<PathBuf>,
         #[arg(long)]
+        store_dir: Option<PathBuf>,
+        #[arg(long)]
         s3_bucket: Option<String>,
         #[arg(long)]
         s3_prefix: Option<String>,
@@ -129,6 +140,107 @@ enum Command {
         #[command(subcommand)]
         target: HydrateTarget,
     },
+    /// Manage encrypted per-profile host store files (transition mode).
+    Store(StoreCli),
+}
+
+#[derive(Parser)]
+struct StoreCli {
+    #[arg(long)]
+    identity: Option<PathBuf>,
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+    #[arg(long)]
+    store_dir: Option<PathBuf>,
+    /// Fail instead of prompting when required fields are missing.
+    #[arg(long)]
+    non_interactive: bool,
+    #[command(subcommand)]
+    command: StoreCommand,
+}
+
+#[derive(Subcommand)]
+enum StoreCommand {
+    /// Create the store directory and ensure the host age identity exists.
+    Init,
+    /// Upsert one secret entry for a catalog profile.
+    #[command(visible_alias = "set")]
+    Put {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        value: Option<String>,
+        #[arg(long)]
+        value_file: Option<PathBuf>,
+        /// Backend for a new profile file (`flat` or `sqlite`; default flat).
+        #[arg(long, default_value = "flat")]
+        backend: String,
+    },
+    /// Read one entry (masked unless `--show`).
+    Get {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        /// Print the plaintext secret (default output is masked).
+        #[arg(long)]
+        show: bool,
+    },
+    /// List profiles and entry names in the store.
+    List {
+        /// Limit output to one profile.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Delete one entry from a profile store file.
+    Remove {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Import from a dev layout directory or a single profile env file.
+    Import {
+        /// Directory with `catalog.json`, `{profile}.env`, and optional `files/`.
+        #[arg(long)]
+        from_dir: Option<PathBuf>,
+        /// Env file whose keys are imported into `--profile`.
+        #[arg(long)]
+        from_env_file: Option<PathBuf>,
+        #[arg(long)]
+        profile: Option<String>,
+        /// Backend for new profile files (`flat` or `sqlite`; default flat).
+        #[arg(long, default_value = "flat")]
+        backend: String,
+    },
+    /// Re-encrypt all profile store files with a new host age identity.
+    Rekey {
+        #[arg(long)]
+        new_identity: PathBuf,
+    },
+    /// Emit SSM migration artifacts from the encrypted host store.
+    Export {
+        #[arg(long, value_enum)]
+        format: CliStoreExportFormat,
+        /// Print parameter paths and SHA256 only (no script or manifest body).
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        secrets_prefix: Option<String>,
+        /// Limit export to one catalog profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Write JSON manifest (SHA256 references) instead of a put-parameter shell script.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CliStoreExportFormat {
+    Ssm,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -137,6 +249,8 @@ enum SyncSource {
     Ssm,
     /// Local directory with `catalog.json` and `{profile}.env` files.
     Local,
+    /// Encrypted per-profile files under `store_dir`; catalog from SSM or local `catalog.json`.
+    HostStore,
 }
 
 impl From<SyncSource> for SyncSourceKind {
@@ -144,6 +258,7 @@ impl From<SyncSource> for SyncSourceKind {
         match value {
             SyncSource::Ssm => SyncSourceKind::Ssm,
             SyncSource::Local => SyncSourceKind::Local,
+            SyncSource::HostStore => SyncSourceKind::HostStore,
         }
     }
 }
@@ -216,10 +331,12 @@ fn run() -> Result<(), host_env_vault::Error> {
             );
         }
         Command::Validate {
+            identity,
             source,
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             s3_bucket,
             s3_prefix,
             profile,
@@ -227,11 +344,13 @@ fn run() -> Result<(), host_env_vault::Error> {
             manifest,
         } => {
             let resolved = file_config.resolve_validate(&ValidateCliOverrides {
+                identity,
                 state_dir,
                 source: source.map(SyncSourceKind::from),
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                store_dir,
                 manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
@@ -274,6 +393,38 @@ fn run() -> Result<(), host_env_vault::Error> {
                     })?;
                     host_env_vault::validate_from_local(&local_dir, s3_port, &options)?;
                 }
+                SyncSourceKind::HostStore => {
+                    let identity_path = resolved.identity.ok_or_else(|| {
+                        host_env_vault::Error::CatalogParse(
+                            "validate --source host-store requires identity in config or --identity".into(),
+                        )
+                    })?;
+                    let kek = AgeKek::read_identity(&identity_path)?;
+                    if let Some(local_dir) = resolved.local_secrets_dir {
+                        let catalog = host_env_vault::LocalSecretSource::new(&local_dir);
+                        host_env_vault::validate_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &options,
+                        )?;
+                    } else {
+                        let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                        let catalog = host_env_vault::SsmSecretSource::new(
+                            &options.catalog_param,
+                            &options.secrets_prefix,
+                            &ssm,
+                        );
+                        host_env_vault::validate_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &options,
+                        )?;
+                    }
+                }
             }
         }
         Command::Sync {
@@ -283,6 +434,7 @@ fn run() -> Result<(), host_env_vault::Error> {
             catalog_param,
             secrets_prefix,
             local_secrets_dir,
+            store_dir,
             s3_bucket,
             s3_prefix,
         } => {
@@ -293,6 +445,7 @@ fn run() -> Result<(), host_env_vault::Error> {
                 catalog_param,
                 secrets_prefix,
                 local_secrets_dir,
+                store_dir,
                 manifests_dir: None,
                 s3_bucket,
                 s3_prefix,
@@ -335,6 +488,34 @@ fn run() -> Result<(), host_env_vault::Error> {
                         &mut table,
                         &options,
                     )?;
+                }
+                SyncSourceKind::HostStore => {
+                    if let Some(local_dir) = resolved.local_secrets_dir {
+                        let catalog = host_env_vault::LocalSecretSource::new(&local_dir);
+                        host_env_vault::sync_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &mut table,
+                            &options,
+                        )?;
+                    } else {
+                        let ssm = AwsSsm::from_env().map_err(map_cli_ssm)?;
+                        let catalog = host_env_vault::SsmSecretSource::new(
+                            &options.catalog_param,
+                            &options.secrets_prefix,
+                            &ssm,
+                        );
+                        host_env_vault::sync_from_host_store(
+                            &catalog,
+                            &resolved.store_dir,
+                            &kek,
+                            s3_port,
+                            &mut table,
+                            &options,
+                        )?;
+                    }
                 }
             }
             eprintln!("synced bundles into {}", resolved.state_dir.display());
@@ -410,6 +591,157 @@ fn run() -> Result<(), host_env_vault::Error> {
                 eprintln!("hydrated gh from {}", state_dir.display());
             }
         },
+        Command::Store(store_cli) => run_store(&file_config, store_cli)?,
+    }
+    Ok(())
+}
+
+fn run_store(
+    file_config: &host_env_vault::FileConfig,
+    store_cli: StoreCli,
+) -> Result<(), host_env_vault::Error> {
+    let resolved = file_config.resolve_store(&StoreCliOverrides {
+        identity: store_cli.identity,
+        state_dir: store_cli.state_dir,
+        store_dir: store_cli.store_dir,
+        secrets_prefix: None,
+    })?;
+    let options = StoreOptions {
+        identity_path: resolved.identity.clone(),
+        store_dir: resolved.store_dir.clone(),
+    };
+    let non_interactive = store_cli.non_interactive;
+    match store_cli.command {
+        StoreCommand::Init => {
+            store_init(&options)?;
+            eprintln!(
+                "store ready at {} (identity {})",
+                options.store_dir.display(),
+                options.identity_path.display()
+            );
+        }
+        StoreCommand::Put {
+            profile,
+            name,
+            value,
+            value_file,
+            backend,
+        } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let secret = resolve_secret_value(value, value_file, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let backend = StoreBackend::parse_cli(&backend)?;
+            store_put(&options, &profile, &name, &secret, &kek, backend)?;
+            eprintln!("stored {profile}/{name}");
+        }
+        StoreCommand::Get {
+            profile,
+            name,
+            show,
+        } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let out = store_get(&options, &profile, &name, &kek, show)?;
+            println!("{out}");
+        }
+        StoreCommand::List { profile } => {
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let mut listings = store_list(&options, &kek)?;
+            if let Some(filter) = profile {
+                listings.retain(|row| row.profile == filter);
+            }
+            if listings.is_empty() {
+                eprintln!("(no profiles in store)");
+            } else {
+                for row in listings {
+                    println!("{}:", row.profile);
+                    for entry in row.entries {
+                        println!("  {entry}");
+                    }
+                }
+            }
+        }
+        StoreCommand::Remove { profile, name } => {
+            let profile = resolve_field("profile", profile, non_interactive)?;
+            let name = resolve_field("entry name", name, non_interactive)?;
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            store_remove(&options, &profile, &name, &kek)?;
+            eprintln!("removed {profile}/{name}");
+        }
+        StoreCommand::Import {
+            from_dir,
+            from_env_file,
+            profile,
+            backend,
+        } => {
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let backend = StoreBackend::parse_cli(&backend)?;
+            match (from_dir, from_env_file) {
+                (Some(dir), None) => {
+                    let count = store_import_from_dev_dir(
+                        &options,
+                        &dir,
+                        profile.as_deref(),
+                        &kek,
+                        backend,
+                    )?;
+                    eprintln!("imported {count} entries from {}", dir.display());
+                }
+                (None, Some(path)) => {
+                    let profile = resolve_field("profile", profile, non_interactive)?;
+                    let count =
+                        store_import_from_env_file(&options, &profile, &path, &kek, backend)?;
+                    eprintln!("imported {count} entries from {}", path.display());
+                }
+                (Some(_), Some(_)) => {
+                    return Err(host_env_vault::Error::CatalogParse(
+                        "import: pass only one of --from-dir or --from-env-file".into(),
+                    ));
+                }
+                (None, None) => {
+                    return Err(host_env_vault::Error::CatalogParse(
+                        "import: pass --from-dir or --from-env-file".into(),
+                    ));
+                }
+            }
+        }
+        StoreCommand::Rekey { new_identity } => {
+            let old_kek = AgeKek::read_identity(&options.identity_path)?;
+            let new_kek = AgeKek::read_identity(&new_identity)?;
+            let count = store_rekey(&options, &old_kek, &new_kek)?;
+            eprintln!(
+                "rekeyed {count} profile store files (new identity {})",
+                new_identity.display()
+            );
+        }
+        StoreCommand::Export {
+            format: _,
+            dry_run,
+            secrets_prefix,
+            profile,
+            json,
+        } => {
+            let prefix = secrets_prefix.unwrap_or(resolved.secrets_prefix);
+            let kek = AgeKek::read_identity(&options.identity_path)?;
+            let output = if json {
+                StoreExportOutput::JsonManifest
+            } else {
+                StoreExportOutput::Script
+            };
+            let body = store_export_ssm(
+                &options,
+                &StoreExportSsmOptions {
+                    secrets_prefix: prefix,
+                    dry_run,
+                    output,
+                    profile_filter: profile,
+                },
+                &kek,
+            )?;
+            print!("{body}");
+        }
     }
     Ok(())
 }

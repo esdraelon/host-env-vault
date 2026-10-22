@@ -2,7 +2,29 @@
 
 Secrets for containers, kept on the host—not in git, not in the image, and not in one shared `.env` every service can read.
 
-The agent **syncs** from AWS SSM or from a local dev directory, **seals** encrypted bundles on disk, then either **renders** files before start or **serves** them over a unix socket while the app runs.
+The agent **syncs** from AWS SSM, local dev files, or an encrypted **host store**, **seals** encrypted bundles on disk, then either **renders** files before start or **serves** them over a unix socket while the app runs.
+
+---
+
+## Security posture ladder
+
+Weakest → strongest at the application (pick the highest step you can operate today):
+
+| Step | Where secrets live | Typical `sync` source | Downstream |
+| --- | --- | --- | --- |
+| 0 — Legacy | Plaintext in compose, image env, or gitignored `.env` in the repo | — | Migrate away; never commit values. |
+| 1 — Transition | Age-encrypted **host store** (`store_dir`; one file per profile) | `host-store` | Same **`.hev` → render/serve** as production. |
+| 2 — Target ops | AWS Parameter Store (+ optional S3 documents) | `ssm` | Offline-capable after sync; IAM on the host. |
+| 3 — Runtime fetch | Sensitive names only on **runtime** lists | Any source that feeds sync | **`serve`** unix socket; inject lists stay minimal. |
+
+**Transition mode warnings**
+
+- Host store directories must be **root-only**; logs note when transition mode is active.
+- There is **no** supported workflow that decrypts store files into an editor—use **`host-env-vault store put`**, **`store import`**, or SSM/API.
+- Per-profile backends are chosen by **file extension only**: `{profile}.secrets.age` (flat blob) or `{profile}.secrets.db` (SQLite sealed with the same host KEK). Do not keep both extensions for one profile.
+- Cut over to SSM with **`store export`** and [docs/transition.md](docs/transition.md).
+
+**Agent skill:** [`.cursor/skills/host-env-vault/SKILL.md`](.cursor/skills/host-env-vault/SKILL.md) — assess an app tree, manifests, and CLI-only migration scripts (generated locally, not shipped in this repo).
 
 ---
 
@@ -86,10 +108,11 @@ state_dir = "/var/lib/host-env-vault"
 runtime_dir = "/run/host-env-vault"
 
 [sync]
-source = "ssm"   # or "local"
+source = "ssm"   # or "local" or "host-store"
 catalog_param = "/host-env-vault/profiles"
 secrets_prefix = "/host-env-vault"
-local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local
+local_secrets_dir = "/etc/host-env-vault/dev"  # when source = local or host-store catalog on disk
+# store_dir = "/var/lib/host-env-vault/store"  # default: {state_dir}/store; host-store entries
 # manifests_dir = "/var/lib/host-env-vault/manifests"  # default: {state_dir}/manifests
 # s3_bucket = "my-recovery-bucket"
 # s3_prefix = "recovery/"
@@ -103,15 +126,47 @@ host-env-vault render --profile app-web --dest /run/host-env-vault/app-web/curre
 host-env-vault serve --profile app-worker
 ```
 
+### CLI reference
+
+Global: **`--config PATH`** (overrides `HOST_ENV_VAULT_CONFIG`). **`sync`**, **`render`**, **`serve`**, **`validate`**, and **`store`** resolve `identity`, `state_dir`, `runtime_dir`, and `[sync]` fields from the config file when flags are omitted.
+
+| Subcommand | Role |
+| --- | --- |
+| **`validate`** | Read-only dry-run: catalog, **manifest preflight**, every secret entry (and optional S3 documents). No KEK creation, no `.hev` writes. Same `--source` as sync. |
+| **`sync`** | Fetch catalog + entries, seal `{state_dir}/{profile}.hev`. Manifest failure keeps the old bundle and writes `{profile}.stale`. |
+| **`render`** | Decrypt **inject** lists to an empty `--dest`; adds synthetic `ENV_HOST_VAULT_STALE` true/false from `{profile}.stale`. |
+| **`serve`** | One profile with `socket: true`; runtime env/file fetch over unix socket. |
+| **`store init`** | Create `store_dir` and ensure host age identity. |
+| **`store put`** / **`set`** | Upsert one entry (`--backend flat\|sqlite` when creating a new profile file). |
+| **`store get`** | Read one entry (masked; `--show` for debugging). |
+| **`store list`** | Profiles and entry names in the store. |
+| **`store remove`** | Delete one entry. |
+| **`store import`** | From dev layout (`--from-dir`) or one env file (`--from-env-file --profile`). |
+| **`store rekey`** | Re-encrypt all profile store files with `--new-identity`. |
+| **`store export`** | SSM migration script or JSON manifest (`--format ssm`, `--dry-run`, `--json`). See [transition.md](docs/transition.md). |
+
+Legacy / hooks: `keygen`, `seal`, `fetch-documents`, `hydrate gh`.
+
+### Manifests (`{profile}.env-host-vault`)
+
+Each catalog profile needs a TOML manifest listing **names only** (inject/runtime env and file basenames). Lists must **exactly match** the catalog allowlists—see [docs/validate.md](docs/validate.md).
+
+| Location | Path |
+| --- | --- |
+| Host (default) | `{state_dir}/manifests/{profile}.env-host-vault` (override with `[sync] manifests_dir`) |
+| Local dev | `{local_secrets_dir}/{profile}.env-host-vault` when `--source local` and the file exists |
+
+Missing manifest or mismatch → **`validate`** fails; **`sync`** skips re-sealing that profile and writes `{profile}.stale`. Example: [docs/examples/dev-shared/manifests/](docs/examples/dev-shared/manifests/).
+
 ### CLI cheat sheet
 
-`sync`, `render`, and `serve` read `identity`, `state_dir`, and (for serve) `runtime_dir` from the config file when flags are omitted. `state_dir` defaults to `/var/lib/host-env-vault` if neither flag nor file sets it.
-
 ```bash
-# Dry-run: confirm catalog + SSM entries (no identity, no bundles)
+# Preflight (CI / before sync): no identity required for SSM-only checks
 host-env-vault validate \
   --catalog-param /host-env-vault/profiles \
   --secrets-prefix /host-env-vault
+
+host-env-vault validate --profile app-web --source local --local-secrets-dir ./dev-shared/secrets
 
 # Refresh all profiles from AWS
 host-env-vault sync \
@@ -238,6 +293,62 @@ host-env-vault sync \
 ```
 
 `--source` defaults to `ssm`. Local sync does not call the AWS SDK for catalog or secrets; optional `--s3-bucket` still pulls catalog **documents** from S3 when configured. After sync, `render` and `serve` behave the same as in production (local bundles only).
+
+### Transition deployment (host encrypted store)
+
+When SSM is not ready yet, keep secrets **encrypted on the host** instead of plaintext in compose files. The same age identity that seals `.hev` bundles also encrypts per-profile store files under `{store_dir}` (default `{state_dir}/store`):
+
+- **`{profile}.secrets.age`** — single encrypted blob per profile (default for new entries).
+- **`{profile}.secrets.db`** — age-sealed SQLite (pick with `store put --backend sqlite` or `store import --backend sqlite` when creating that profile’s file).
+
+1. **Initialize** the store layout and host identity (creates `kek.age` when missing):
+
+   ```bash
+   sudo host-env-vault store init \
+     --identity /etc/host-env-vault/kek.age \
+     --state-dir /var/lib/host-env-vault
+   ```
+
+2. **Load secrets** without editing decrypted files (no `$EDITOR` workflow):
+
+   ```bash
+   # Interactive prompts on a TTY; use --non-interactive plus flags in scripts
+   host-env-vault store put --profile app-web --name DB_PASS --value '…'
+   host-env-vault store put --profile app-worker --backend sqlite --name API_SECRET --value '…'
+
+   # Bulk import from the same layout as local dev sync
+   host-env-vault store import --from-dir ./dev-secrets
+
+   # Or import every KEY=value line from one env file
+   host-env-vault store import --from-env-file ./app-web.env --profile app-web
+   ```
+
+3. **Write manifests** under `{state_dir}/manifests/` (names only; must match catalog)—then **preflight**:
+
+   ```bash
+   host-env-vault validate --source host-store --identity /etc/host-env-vault/kek.age
+   ```
+
+4. **Point sync at the store** (catalog still from SSM or local `catalog.json`):
+
+   ```toml
+   [sync]
+   source = "host-store"
+   store_dir = "/var/lib/host-env-vault/store"
+   local_secrets_dir = "/etc/host-env-vault/dev"   # optional: catalog.json on disk
+   manifests_dir = "/var/lib/host-env-vault/manifests"
+   ```
+
+   ```bash
+   host-env-vault sync --source host-store --identity /etc/host-env-vault/kek.age
+   host-env-vault render --profile app-web --dest /run/host-env-vault/app-web/current
+   ```
+
+5. **Operate the store**: `store list`, `store get` (masked by default; `--show` for debugging), `store remove`, `store rekey --new-identity /path/to/new.age`.
+
+6. **Leave transition mode** when IAM is ready: `store export --format ssm` → load parameters → `validate --source ssm` → set `[sync] source = "ssm"`. Full checklist: [docs/transition.md](docs/transition.md).
+
+Automation must pass `--non-interactive` and every required flag (`--profile`, `--name`, `--value` or `--value-file`).
 
 ---
 
@@ -577,6 +688,10 @@ Install `target/release/host-env-vault` to `/usr/local/bin/`.
 
 ## Further reading
 
-- [docs/revision.md](docs/revision.md) — M10+ stacked work: local dev sync, config file, **systemd installer (M15)**, **profile setup wizard (M16)**
+- [docs/validate.md](docs/validate.md) — `validate`, manifest discovery, stale bundles
+- [docs/transition.md](docs/transition.md) — host store → SSM cutover
+- [docs/compositional-catalog.md](docs/compositional-catalog.md) — merge profile fragments
+- [.cursor/skills/host-env-vault/SKILL.md](.cursor/skills/host-env-vault/SKILL.md) — agent checklist for migration off compose plaintext
+- [docs/revision.md](docs/revision.md) — M10+ stacked milestone log
 - [docs/architecture.md](docs/architecture.md) — module layout for contributors
 - [docs/plan.md](docs/plan.md) — original milestone checklist

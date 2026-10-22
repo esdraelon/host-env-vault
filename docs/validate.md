@@ -60,3 +60,5 @@ A **missing manifest file is a hard failure** for both `validate` and `sync`.
 - `ENV_HOST_VAULT_STALE=false` otherwise
 
 See [compositional catalog](compositional-catalog.md) for how profile fragments merge before sync.
+
+When leaving host-store transition mode, use [transition.md](transition.md) for `store export` and the SSM cutover checklist.
