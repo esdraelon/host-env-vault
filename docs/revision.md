@@ -428,6 +428,15 @@ The repo documents **inputs** (app directory layout conventions), **CLI command 
 
 **Acceptance.** Skill frontmatter + checklist; README table of subcommands; no product-specific app names in skill.
 
+- [x] **M23** `stack/m23-readme-agent-skill` — README posture ladder and CLI reference; agent skill; compositional-catalog link.
+
+### M23 completion
+
+- **Branch:** `stack/m23-readme-agent-skill`
+- **What changed:** README security posture ladder, transition warnings, subcommand table (`validate` / `sync` / `store` / manifests), dual store extensions, transition doc links; [`.cursor/skills/host-env-vault/SKILL.md`](../.cursor/skills/host-env-vault/SKILL.md) validate-vs-sync graph, store subcommands, migration north star; [compositional-catalog.md](compositional-catalog.md) manifest + skill link; [transition.md](transition.md) archive note for `.secrets.db`.
+- **Commit:** branch tip (`git log -1 --oneline` on `stack/m23-readme-agent-skill`)
+- **Gate:** docs only — no `./scripts/gate.sh test`; `test ! -d /tmp/hev-target`.
+
 ## Open questions
 
 - Should local dev support **only** `.env` per profile, or also a single merged `.env` with prefixed keys (`APP_WEB__DB_PASS`)?

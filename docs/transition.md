@@ -37,6 +37,6 @@ Config file `[sync] secrets_prefix` and `store_dir` apply when flags are omitted
 2. **Load SSM** — run the generated script (or load parameters your own way using the JSON manifest hashes as a checksum guide).
 3. **Validate** — `host-env-vault validate --source ssm` (manifest preflight still required; see [validate.md](validate.md)).
 4. **Switch sync** — set `[sync] source = "ssm"` in config (or drop `--source host-store` from units) and run `sync`.
-5. **Archive store** — after a successful sync from SSM, move or remove `{store_dir}/*.secrets.age` and document that transition mode is off.
+5. **Archive store** — after a successful sync from SSM, move or remove `{store_dir}/*.secrets.age` and `*.secrets.db` and document that transition mode is off.
 
 Catalog parameter (`catalog_param`) is **not** exported by `store export`; update the catalog in SSM separately if profiles changed during transition.
