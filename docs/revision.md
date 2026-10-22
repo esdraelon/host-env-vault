@@ -403,7 +403,7 @@ No separate SDK crate until protocol stabilizes; copy-paste helpers are enough f
 - **What changed:** [`StoreBackend`](src/vault/host_store/mod.rs) resolves engine from `{profile}.secrets.age` vs `{profile}.secrets.db` only (ambiguous pair → hard fail); flat engine in [`flat.rs`](src/vault/host_store/flat.rs), age-sealed SQLite in [`sqlite.rs`](src/vault/host_store/sqlite.rs); [`HostStoreSecretSource`](src/ports/secret_source.rs) and [`store`](src/application/store/mod.rs) CRUD/rekey dispatch per profile; `store put` / `store import --backend flat|sqlite` for new profile files (default flat).
 - **Log-tested branches:** unchanged M20 store logs (no new decision branches).
 - **Commit:** branch tip (`git log -1 --oneline` on `stack/m22-store-sqlite-dual-engine`)
-- **Gate:** `./scripts/gate.sh test` — **282** passed; `./scripts/gate.sh mutants -- --file src/vault/host_store/mod.rs` — **17/19** viable caught (**2** missed, **2** unviable); follow-up: scoped mutants on `flat.rs` / `sqlite.rs` / `store/mod.rs`.
+- **Gate:** `./scripts/gate.sh test` — **288** passed; scoped `cargo mutants` on `host_store/{mod,flat,sqlite}.rs`, `application/store/mod.rs`, `ports/secret_source.rs` — **114/117 caught (97.4%)** on viable mutants (125 total, 8 unviable).
 
 ## M23 — README and agent skill (operator + migration UX)
 

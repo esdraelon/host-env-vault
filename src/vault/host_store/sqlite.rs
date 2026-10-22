@@ -148,6 +148,23 @@ fn sqlite_err(err: rusqlite::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::kek::AgeKek;
+
+    #[test]
+    fn read_sqlite_maps_missing_file_to_ssm_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "hev-sqlite-read-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let kek = AgeKek::generate();
+        assert!(matches!(
+            read_sqlite_profile_store(&root, "app-worker", &kek),
+            Err(Error::SsmMissing(path)) if path.contains("app-worker.secrets.db")
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn sqlite_store_round_trip_in_memory_schema() {

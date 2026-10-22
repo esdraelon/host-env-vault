@@ -76,3 +76,25 @@ pub fn read_flat_profile_store(
     })?;
     Ok(payload.entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::kek::AgeKek;
+
+    #[test]
+    fn read_flat_maps_missing_file_to_ssm_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "hev-flat-read-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let kek = AgeKek::generate();
+        assert!(matches!(
+            read_flat_profile_store(&root, "app-web", &kek),
+            Err(Error::SsmMissing(path)) if path.contains("app-web.secrets.age")
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

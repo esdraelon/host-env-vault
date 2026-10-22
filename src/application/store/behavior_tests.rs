@@ -130,6 +130,26 @@ fn mask_secret_formats_length() {
 }
 
 #[test]
+fn store_import_from_dev_dir_skips_empty_profile_without_writing_store() {
+    let root = temp_root("import-empty-profile");
+    let dev = temp_root("import-empty-profile-dev");
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&dev);
+    fs::create_dir_all(&dev).unwrap();
+    const CATALOG: &str =
+        r#"{"profiles":[{"name":"app-web","inject":[],"runtime":[]}]}"#;
+    fs::write(dev.join(LOCAL_CATALOG_FILE), CATALOG).unwrap();
+    fs::write(dev.join("app-web.env"), "\n").unwrap();
+    let opts = options(&root);
+    let kek = AgeKek::generate();
+    let count = store_import_from_dev_dir(&opts, &dev, None, &kek, StoreBackend::Flat).unwrap();
+    assert_eq!(count, 0);
+    assert!(!profile_store_path(&opts.store_dir, "app-web").is_file());
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&dev);
+}
+
+#[test]
 fn store_import_from_dev_dir_honors_profile_filter() {
     let root = temp_root("import-filter");
     let dev = temp_root("import-filter-dev");
@@ -149,6 +169,29 @@ fn store_import_from_dev_dir_honors_profile_filter() {
     assert_eq!(count, 1);
     assert!(read_profile_store(&opts.store_dir, "app-web", &kek).is_ok());
     assert!(read_profile_store(&opts.store_dir, "app-worker", &kek).is_err());
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&dev);
+}
+
+#[test]
+fn store_import_from_dev_dir_does_not_write_when_profile_has_no_entries() {
+    let root = temp_root("import-empty-profile");
+    let dev = temp_root("import-empty-dev");
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&dev);
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&dev).unwrap();
+    const CATALOG: &str =
+        r#"{"profiles":[{"name":"app-web","inject":[],"runtime":[]}]}"#;
+    fs::write(dev.join(LOCAL_CATALOG_FILE), CATALOG).unwrap();
+    fs::write(dev.join("app-web.env"), "\n").unwrap();
+    let opts = options(&root);
+    store_init(&opts).unwrap();
+    let kek = AgeKek::generate();
+    let count =
+        store_import_from_dev_dir(&opts, &dev, None, &kek, StoreBackend::Flat).unwrap();
+    assert_eq!(count, 0);
+    assert!(!profile_store_path(&opts.store_dir, "app-web").is_file());
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&dev);
 }

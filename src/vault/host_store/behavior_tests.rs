@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 
+use super::flat::read_flat_profile_store;
+use super::sqlite::read_sqlite_profile_store;
 use super::{
     ensure_store_dir, list_stored_profiles, resolve_store_backend, sqlite_store_path,
     write_profile_store_with_backend, StoreBackend, *,
@@ -48,6 +50,14 @@ fn read_profile_store_maps_missing_file() {
     assert!(matches!(
         read_profile_store(&root, "app-web", &kek),
         Err(crate::core::error::Error::SsmMissing(path)) if path.contains("app-web.secrets.age")
+    ));
+    assert!(matches!(
+        read_flat_profile_store(&root, "app-web", &kek),
+        Err(crate::core::error::Error::SsmMissing(path)) if path.contains("app-web.secrets.age")
+    ));
+    assert!(matches!(
+        read_sqlite_profile_store(&root, "app-web", &kek),
+        Err(crate::core::error::Error::SsmMissing(path)) if path.contains("app-web.secrets.db")
     ));
     let _ = fs::remove_dir_all(&root);
 }
@@ -131,6 +141,26 @@ fn list_stored_profiles_includes_sqlite_and_flat() {
         .unwrap();
     let names = list_stored_profiles(&root).unwrap();
     assert_eq!(names, vec!["app-web".to_string(), "app-worker".to_string()]);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn store_backend_as_str_is_stable_for_cli() {
+    assert_eq!(StoreBackend::Flat.as_str(), "flat");
+    assert_eq!(StoreBackend::Sqlite.as_str(), "sqlite");
+}
+
+#[test]
+fn list_stored_profiles_rejects_ambiguous_dual_backend() {
+    let root = temp_store_root("list-ambiguous");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(profile_store_path(&root, "app-web"), b"flat").unwrap();
+    fs::write(sqlite_store_path(&root, "app-web"), b"sqlite").unwrap();
+    assert!(matches!(
+        list_stored_profiles(&root),
+        Err(crate::core::error::Error::CatalogParse(msg)) if msg.contains("ambiguous")
+    ));
     let _ = fs::remove_dir_all(&root);
 }
 
